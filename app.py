@@ -8,11 +8,12 @@ st.set_page_config(
 import pandas as pd
 import numpy as np
 import altair as alt
-import pydeck as pdk
 import requests
 from datetime import datetime
 from supabase import create_client, Client
-import cohere  # Import Cohere for generating advice
+import cohere  # For generating advice
+import folium
+from streamlit_folium import st_folium
 
 # ============================
 # API KEYS and CONFIGURATION
@@ -25,60 +26,66 @@ SUPABASE_CONFIG = st.secrets.get("supabase", {})
 SUPABASE_URL = SUPABASE_CONFIG.get("url", "YOUR_SUPABASE_PROJECT_URL")
 SUPABASE_ANON_KEY = SUPABASE_CONFIG.get("anon_key", "YOUR_SUPABASE_ANON_KEY")
 SUPABASE_TABLE = SUPABASE_CONFIG.get("table_name", "feedback")
-# Table for sustainability metrics will now use the key 'impact_table'
-IMPACT_TABLE = SUPABASE_CONFIG.get("impact_table", "Impact")
-
-# Initialize Supabase Client
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
+# For sustainability metrics, we are now using Sheety (see below)
 
 # ============================
-# Persistent Metrics Functions with Caching
+# Sheety Metrics Functions
 # ============================
+SHEETY_CONFIG = st.secrets.get("sheety", {})
+SHEETY_METRICS_URL = SHEETY_CONFIG.get("metrics_url", "YOUR_SHEETY_METRICS_URL")
+
 @st.cache_data
-def get_metrics_from_db():
+def get_metrics_from_sheety():
     """
-    Retrieve the current sustainability metrics from Supabase.
-    This result is cached to avoid repeated database queries within a session.
+    Retrieve the current sustainability metrics from the Sheety API.
+    Expects the API to return JSON with a key "metrics" that is a list.
     """
-    res = supabase.table(IMPACT_TABLE).select("*").execute()
-    data = res.data
-    if data:
-        return data[0]
+    response = requests.get(SHEETY_METRICS_URL)
+    if response.status_code == 200:
+        data = response.json()
+        if "metrics" in data and len(data["metrics"]) > 0:
+            return data["metrics"][0]
+        else:
+            return {"routes_simulated": 0, "total_emissions_saved": 0, "fuel_savings": 0}
     else:
-        return {
-            "routes_simulated": 0,
-            "total_emissions_saved": 0,
-            "fuel_savings": 0
-        }
+        st.error("Error fetching metrics from Sheety: " + str(response.status_code))
+        return {"routes_simulated": 0, "total_emissions_saved": 0, "fuel_savings": 0}
 
-def update_metrics_in_db(new_routes: int, new_emissions: float):
+def update_metrics_in_sheety(new_routes: int, new_emissions: float):
     """
-    Update the sustainability metrics in Supabase by adding new data.
-    After updating the DB, clear the cache so that subsequent calls fetch the latest data.
+    Update the sustainability metrics in Sheety by adding new data.
+    If no metrics exist, create a new row; otherwise, update the existing row.
+    Clears the cache after updating.
     """
     fuel_saving_per_route = 50   # e.g., each route saves 50 liters
-
-    res = supabase.table(IMPACT_TABLE).select("*").execute()
-    data = res.data
-
-    if not data:
+    current_metrics = get_metrics_from_sheety()
+    
+    if (current_metrics.get("routes_simulated", 0) == 0 and 
+        current_metrics.get("total_emissions_saved", 0) == 0 and 
+        current_metrics.get("fuel_savings", 0) == 0):
         new_metrics = {
             "routes_simulated": new_routes,
             "total_emissions_saved": new_emissions,
             "fuel_savings": new_routes * fuel_saving_per_route
         }
-        supabase.table(IMPACT_TABLE).insert(new_metrics).execute()
+        response = requests.post(SHEETY_METRICS_URL, json={"metrics": new_metrics})
+        if response.status_code not in [200, 201]:
+            st.error("Error inserting new metrics: " + response.text)
     else:
-        current = data[0]
         updated = {
-            "routes_simulated": current.get("routes_simulated", 0) + new_routes,
-            "total_emissions_saved": current.get("total_emissions_saved", 0) + new_emissions,
-            "fuel_savings": current.get("fuel_savings", 0) + new_routes * fuel_saving_per_route
+            "routes_simulated": current_metrics.get("routes_simulated", 0) + new_routes,
+            "total_emissions_saved": current_metrics.get("total_emissions_saved", 0) + new_emissions,
+            "fuel_savings": current_metrics.get("fuel_savings", 0) + new_routes * fuel_saving_per_route
         }
-        record_id = current["id"]
-        supabase.table(IMPACT_TABLE).update(updated).eq("id", record_id).execute()
-    
-    get_metrics_from_db.clear()
+        row_id = current_metrics.get("id")
+        if row_id:
+            update_url = SHEETY_METRICS_URL + f"/{row_id}"
+            response = requests.put(update_url, json={"metrics": updated})
+            if response.status_code not in [200, 201]:
+                st.error("Error updating metrics: " + response.text)
+        else:
+            st.error("No row id found for metrics update.")
+    get_metrics_from_sheety.clear()
 
 # ============================
 # Cohere Advice Function
@@ -263,8 +270,8 @@ elif page == "Sustainability Metrics":
     st.title("Sustainability Metrics")
     st.markdown("### Overall Impact of GreenRoute")
     
-    # Retrieve persistent metrics from Supabase (cached)
-    metrics = get_metrics_from_db()
+    # Retrieve persistent metrics from Sheety (cached)
+    metrics = get_metrics_from_sheety()
     routes_simulated = metrics.get("routes_simulated", 0)
     total_emissions_saved = metrics.get("total_emissions_saved", 0)
     fuel_savings = metrics.get("fuel_savings", 0)
@@ -319,8 +326,8 @@ elif page == "Route Optimization Simulator":
     
     if st.button("Simulate Route"):
         if origin and destination:
-            origin_coords = get_coordinates(origin)
-            destination_coords = get_coordinates(destination)
+            origin_coords = get_coordinates(origin)  # Returns (lat, lon)
+            destination_coords = get_coordinates(destination)  # Returns (lat, lon)
             if None in origin_coords or None in destination_coords:
                 st.error("Could not geocode the provided addresses. Please try different inputs.")
             else:
@@ -333,56 +340,33 @@ elif page == "Route Optimization Simulator":
                     st.write(f"**Estimated Travel Time:** {duration:.2f} hours")
                     st.write(f"**Estimated CO₂ Emissions Saved:** {emissions_estimated:.2f} kg")
                     
-                    # Update persistent metrics in Supabase
-                    update_metrics_in_db(new_routes=1, new_emissions=emissions_estimated)
+                    # Update persistent metrics via Sheety
+                    update_metrics_in_sheety(new_routes=1, new_emissions=emissions_estimated)
                     
-                    if geometry and len(geometry) >= 2:
-                        lats = [coord[1] for coord in geometry]
-                        lons = [coord[0] for coord in geometry]
-                        avg_lat = sum(lats) / len(lats)
-                        avg_lon = sum(lons) / len(lons)
-                        
-                        # Create a PathLayer for the route
-                        route_layer = pdk.Layer(
-                            "PathLayer",
-                            data=[{"path": geometry, "name": "Route"}],
-                            get_path="path",
-                            get_color="[255, 0, 0, 255]",
-                            width_scale=20,
-                            width_min_pixels=2,
-                            get_width=5,
-                        )
-                        
-                        # Create a ScatterplotLayer to mark the origin and destination
-                        marker_layer = pdk.Layer(
-                            "ScatterplotLayer",
-                            data=[
-                                {"position": [origin_coords[1], origin_coords[0]], "name": "Origin"},
-                                {"position": [destination_coords[1], destination_coords[0]], "name": "Destination"}
-                            ],
-                            get_position="position",
-                            get_fill_color="[0, 0, 255, 255]",
-                            get_radius=20000,
-                        )
-                        
-                        view_state = pdk.ViewState(
-                            latitude=avg_lat,
-                            longitude=avg_lon,
-                            zoom=6,
-                            pitch=0,
-                        )
-                        
-                        deck = pdk.Deck(
-                            layers=[route_layer, marker_layer],
-                            initial_view_state=view_state,
-                            tooltip={"text": "{name}"}
-                        )
-                        st.pydeck_chart(deck)
-                    else:
-                        st.error("Route geometry not available or invalid.")
+                    # If geometry is not valid, use a straight-line path
+                    if not geometry or len(geometry) < 2:
+                        geometry = [[origin_coords[1], origin_coords[0]], [destination_coords[1], destination_coords[0]]]
+                    
+                    # Convert OSRM geometry (lon, lat) to (lat, lon) for Folium
+                    converted_geometry = [[coord[1], coord[0]] for coord in geometry]
+                    
+                    # Calculate map center from the route geometry
+                    center_lat = sum([pt[0] for pt in converted_geometry]) / len(converted_geometry)
+                    center_lon = sum([pt[1] for pt in converted_geometry]) / len(converted_geometry)
+                    
+                    # Create a Folium map centered at the calculated center
+                    m = folium.Map(location=[center_lat, center_lon], zoom_start=6)
+                    # Add the route as a polyline
+                    folium.PolyLine(locations=converted_geometry, color="red", weight=5).add_to(m)
+                    # Add markers for origin and destination
+                    folium.Marker(location=[origin_coords[0], origin_coords[1]], popup="Origin").add_to(m)
+                    folium.Marker(location=[destination_coords[0], destination_coords[1]], popup="Destination").add_to(m)
+                    
+                    # Display the Folium map in Streamlit
+                    st_folium(m, width=700, height=500)
                     
                     # Link sustainability metrics: fetch updated metrics and display a summary
-                    updated_metrics = get_metrics_from_db()
+                    updated_metrics = get_metrics_from_sheety()
                     st.markdown("### Updated Sustainability Impact")
                     st.write(f"**Total Routes Simulated:** {updated_metrics.get('routes_simulated', 0)}")
                     st.write(f"**Total CO₂ Emissions Saved:** {updated_metrics.get('total_emissions_saved', 0):.2f} kg")
