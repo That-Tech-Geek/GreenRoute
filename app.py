@@ -208,7 +208,8 @@ pages = [
     "Sustainability Metrics",
     "Route Optimization Simulator",
     "Real-Time News",
-    "User Feedback"
+    "User Feedback",
+    "Sceptical?"
 ]
 page = st.sidebar.radio("Go to", pages)
 
@@ -428,3 +429,7 @@ elif page == "User Feedback":
                     st.error("There was an error saving your feedback. Please try again later.")
             else:
                 st.warning("Please fill in all fields before submitting.")
+elif page == "Sceptical?"
+    st.title("How this program works")
+    text = "The code calculates and updates its sustainability metrics by storing and aggregating values in a local SQLite database. Initially, a table named sustainability_metrics is created (if it does not already exist) with three columns: total_distance, total_emissions_saved, and fuel_savings. When the database is initialized, a single row with zeros is inserted if no data exists.Whenever the dashboard needs to display metrics, the function that retrieves data from the database (get_metrics_from_db) is called. This function connects to the SQLite database, reads the current values for total_distance, total_emissions_saved, and fuel_savings, and returns these in a dictionary. To improve performance, the result is cached; however, the cache is cleared after any update so that new values are immediately visible.When a user simulates a route using the Route Optimization Simulator page, the code first calls an external API (OSRM) to obtain route information. This API returns the route’s distance (in miles), duration (in hours), and the route geometry. The distance is then used in two calculations. First, it is converted from miles to kilometers (by multiplying by 1.60934) so that it matches the unit used in the database. Second, the function get_carbon_estimate estimates the CO₂ emissions saved by multiplying the distance in miles by a constant factor (0.411 kg CO₂ per mile).The update_metrics_in_db function reads the current metric values from the database and then updates them by adding the new route’s data. The new total distance becomes the previous distance plus the newly simulated distance (in kilometers). Similarly, the new total emissions saved is the previous value plus the estimated CO₂ saved from the current route. For fuel savings, a constant rate of 2 liters per kilometer is used, so the new fuel savings value is calculated by adding (new distance in km multiplied by 2) to the existing fuel savings. After updating, the new values are written back to the database and the cache is cleared to ensure that the updated metrics are displayed.On the Sustainability Metrics page, the dashboard displays the cumulative total kilometers simulated, total CO₂ emissions saved, and estimated fuel savings. It also calculates the average emissions saved per kilometer by dividing the total CO₂ emissions saved by the total distance simulated (with a safeguard for division by zero). These values are then visualized using a bar chart generated with Altair.In summary, the code uses external APIs to calculate route details, applies fixed conversion factors to estimate emissions and fuel savings, and aggregates these metrics over multiple route simulations by continuously updating a SQLite database."
+    st.write(text)
