@@ -14,6 +14,7 @@ from datetime import datetime
 from supabase import create_client, Client
 import cohere  # For generating advice
 from streamlit_folium import folium_static
+import sqlite3
 
 # ============================
 # API KEYS and CONFIGURATION
@@ -26,39 +27,74 @@ SUPABASE_CONFIG = st.secrets.get("supabase", {})
 SUPABASE_URL = SUPABASE_CONFIG.get("url", "YOUR_SUPABASE_PROJECT_URL")
 SUPABASE_ANON_KEY = SUPABASE_CONFIG.get("anon_key", "YOUR_SUPABASE_ANON_KEY")
 SUPABASE_TABLE = SUPABASE_CONFIG.get("table_name", "feedback")
-# (Sustainability metrics will now be stored in st.session_state)
+# Sustainability metrics will be stored in a local SQLite DB.
 
 # Initialize Supabase Client (used for feedback)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 
 # ============================
-# Initialize Sustainability Metrics in Session State
+# Initialize SQLite Database for Sustainability Metrics
 # ============================
-if "sustainability_metrics" not in st.session_state:
-    st.session_state.sustainability_metrics = {
-        "total_distance": 0.0,          # Total kilometers simulated
-        "total_emissions_saved": 0.0,   # in kg CO₂
-        "fuel_savings": 0.0             # in liters
-    }
+def init_db():
+    conn = sqlite3.connect("metrics.db", check_same_thread=False)
+    c = conn.cursor()
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS sustainability_metrics (
+            id INTEGER PRIMARY KEY,
+            total_distance REAL,
+            total_emissions REAL,
+            fuel_savings REAL
+        )
+    """)
+    c.execute("SELECT * FROM sustainability_metrics LIMIT 1")
+    if c.fetchone() is None:
+        c.execute("INSERT INTO sustainability_metrics (total_distance, total_emissions, fuel_savings) VALUES (?, ?, ?)",
+                  (0.0, 0.0, 0.0))
+        conn.commit()
+    conn.close()
 
-def update_sustainability_metrics(new_distance: float, new_emissions: float):
+init_db()
+
+@st.cache_data
+def get_metrics_from_db():
+    """Retrieve sustainability metrics from SQLite and return as a dict."""
+    conn = sqlite3.connect("metrics.db", check_same_thread=False)
+    c = conn.cursor()
+    c.execute("SELECT total_distance, total_emissions, fuel_savings FROM sustainability_metrics LIMIT 1")
+    row = c.fetchone()
+    conn.close()
+    if row is None:
+        return {"total_distance": 0.0, "total_emissions": 0.0, "fuel_savings": 0.0}
+    return {"total_distance": row[0], "total_emissions": row[1], "fuel_savings": row[2]}
+
+def update_metrics_in_db(new_distance: float, new_emissions: float):
     """
-    Update the sustainability metrics stored in st.session_state.
+    Update the sustainability metrics in the SQLite DB.
     new_distance: distance in kilometers
     new_emissions: emissions saved in kg CO₂
+    Assumes a constant fuel savings (e.g., 2 liters saved per km).
     """
-    fuel_saving_per_km = 2.0  # adjust as needed (e.g., 2 liters saved per km)
-    metrics = st.session_state.sustainability_metrics
-    metrics["total_distance"] += new_distance
-    metrics["total_emissions_saved"] += new_emissions
-    metrics["fuel_savings"] += new_distance * fuel_saving_per_km
-    st.session_state.sustainability_metrics = metrics
+    fuel_saving_per_km = 2.0  # adjust as needed
+    conn = sqlite3.connect("metrics.db", check_same_thread=False)
+    c = conn.cursor()
+    c.execute("SELECT total_distance, total_emissions, fuel_savings FROM sustainability_metrics LIMIT 1")
+    row = c.fetchone()
+    if row is None:
+        current_distance, current_emissions, current_fuel = 0.0, 0.0, 0.0
+    else:
+        current_distance, current_emissions, current_fuel = row
+    new_total_distance = current_distance + new_distance
+    new_total_emissions = current_emissions + new_emissions
+    new_fuel_savings = current_fuel + new_distance * fuel_saving_per_km
+    c.execute("UPDATE sustainability_metrics SET total_distance = ?, total_emissions = ?, fuel_savings = ? WHERE id = 1", 
+              (new_total_distance, new_total_emissions, new_fuel_savings))
+    conn.commit()
+    conn.close()
+    get_metrics_from_db.clear()  # Clear cache so updated values are returned
 
 def get_sustainability_metrics():
-    """
-    Return the current sustainability metrics from st.session_state.
-    """
-    return st.session_state.sustainability_metrics
+    """Return the current sustainability metrics from SQLite."""
+    return get_metrics_from_db()
 
 # ============================
 # Cohere Advice Function
@@ -119,7 +155,7 @@ def get_route_info(origin_coords, destination_coords):
             duration = route["duration"] / 3600.0     # convert seconds to hours
             geometry = route.get("geometry", {}).get("coordinates", [])
             if not geometry or len(geometry) < 2:
-                geometry = [[origin_coords[1], origin_coords[0]], [destination_coords[1], destination_coords[0]]]
+                geometry = [[start_lon, start_lat], [end_lon, end_lat]]
             return distance, duration, geometry
     return None, None, None
 
@@ -133,7 +169,7 @@ def get_carbon_estimate(distance, vehicle_type='car'):
 def get_news_articles(query):
     """Fetch news articles using NewsAPI."""
     if not NEWS_API_KEY or NEWS_API_KEY == "YOUR_NEWS_API_KEY":
-        return []  # No API key provided, so no live news
+        return []  # No API key provided
     url = (
         f"https://newsapi.org/v2/everything?q={query}&sortBy=publishedAt"
         f"&apiKey={NEWS_API_KEY}&language=en&pageSize=5"
@@ -244,7 +280,7 @@ elif page == "Sustainability Metrics":
     
     metrics = get_sustainability_metrics()
     total_distance = metrics.get("total_distance", 0.0)
-    total_emissions_saved = metrics.get("total_emissions_saved", 0.0)
+    total_emissions_saved = metrics.get("total_emissions", 0.0)
     fuel_savings = metrics.get("fuel_savings", 0.0)
     
     avg_emissions_saved = total_emissions_saved / total_distance if total_distance else 0
@@ -334,7 +370,7 @@ elif page == "Route Optimization Simulator":
                     metrics = get_sustainability_metrics()
                     st.markdown("### Updated Sustainability Impact")
                     st.write(f"**Total Kilometers Simulated:** {metrics.get('total_distance', 0.0):.2f} km")
-                    st.write(f"**Total CO₂ Emissions Saved:** {metrics.get('total_emissions_saved', 0.0):.2f} kg")
+                    st.write(f"**Total CO₂ Emissions Saved:** {metrics.get('total_emissions', 0.0):.2f} kg")
                     st.write(f"**Estimated Fuel Savings:** {metrics.get('fuel_savings', 0.0):.2f} liters")
                     st.info("For a more detailed view, please check the 'Sustainability Metrics' page in the sidebar.")
                 else:
