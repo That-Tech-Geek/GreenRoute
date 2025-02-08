@@ -5,15 +5,23 @@ import altair as alt
 import pydeck as pdk
 import requests
 from datetime import datetime
+from supabase import create_client, Client
 
 # ============================
 # API KEYS and CONFIGURATION
 # ============================
-# Place these keys in your .streamlit/secrets.toml file under [api_keys]
+# NewsAPI key is under [api_keys]
 API_KEYS = st.secrets.get("api_keys", {})
 NEWS_API_KEY = API_KEYS.get("news_api_key", "YOUR_NEWS_API_KEY")
-# Using Sheety as an alternative to Airtable:
-SHEETY_FEEDBACK_URL = API_KEYS.get("sheety_feedback_url", "YOUR_SHEETY_FEEDBACK_URL")
+
+# Supabase credentials under [supabase]
+SUPABASE_CONFIG = st.secrets.get("supabase", {})
+SUPABASE_URL = SUPABASE_CONFIG.get("url", "YOUR_SUPABASE_PROJECT_URL")
+SUPABASE_ANON_KEY = SUPABASE_CONFIG.get("anon_key", "YOUR_SUPABASE_ANON_KEY")
+SUPABASE_TABLE = SUPABASE_CONFIG.get("table_name", "feedback")
+
+# Initialize Supabase Client
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 
 # ============================
 # API Integration Functions
@@ -32,11 +40,18 @@ def get_coordinates(address):
     return None, None
 
 def get_route_info(origin_coords, destination_coords):
-    """Retrieve route info (distance in miles and duration in hours) using OSRM API."""
-    # OSRM requires coordinates in lon,lat order.
+    """
+    Retrieve route info using OSRM API.
+    Returns distance (miles), duration (hours), and route geometry as a GeoJSON LineString.
+    """
+    # OSRM expects coordinates in lon,lat order.
     start_lon, start_lat = origin_coords[1], origin_coords[0]
     end_lon, end_lat = destination_coords[1], destination_coords[0]
-    url = f"http://router.project-osrm.org/route/v1/driving/{start_lon},{start_lat};{end_lon},{end_lat}?overview=false"
+    url = (
+        f"http://router.project-osrm.org/route/v1/driving/"
+        f"{start_lon},{start_lat};{end_lon},{end_lat}"
+        f"?overview=full&geometries=geojson"
+    )
     response = requests.get(url)
     if response.status_code == 200:
         data = response.json()
@@ -44,19 +59,25 @@ def get_route_info(origin_coords, destination_coords):
             route = data['routes'][0]
             distance = route['distance'] / 1609.34  # convert meters to miles
             duration = route['duration'] / 3600.0   # convert seconds to hours
-            return distance, duration
-    return None, None
+            geometry = route.get("geometry", {}).get("coordinates", [])
+            return distance, duration, geometry
+    return None, None, None
 
 def get_carbon_estimate(distance, vehicle_type='car'):
-    """Estimate CO₂ emissions for a given distance (miles).
-    (Example: an average car emits ~0.411 kg CO₂ per mile.)"""
+    """
+    Estimate CO₂ emissions for a given distance (miles).
+    Example: a typical car emits ~0.411 kg CO₂ per mile.
+    """
     return distance * 0.411
 
 def get_news_articles(query):
     """Fetch news articles using NewsAPI."""
     if not NEWS_API_KEY or NEWS_API_KEY == "YOUR_NEWS_API_KEY":
         return []  # No API key provided, so no live news
-    url = f"https://newsapi.org/v2/everything?q={query}&sortBy=publishedAt&apiKey={NEWS_API_KEY}&language=en&pageSize=5"
+    url = (
+        f"https://newsapi.org/v2/everything?q={query}&sortBy=publishedAt"
+        f"&apiKey={NEWS_API_KEY}&language=en&pageSize=5"
+    )
     response = requests.get(url)
     if response.status_code == 200:
         data = response.json()
@@ -64,21 +85,17 @@ def get_news_articles(query):
         return articles
     return []
 
-def save_feedback_to_sheet(name, email, feedback):
-    """Save user feedback to a Google Sheet via the Sheety API."""
-    headers = {
-        "Content-Type": "application/json"
-    }
+def save_feedback_to_supabase(name, email, feedback):
+    """Save user feedback to Supabase."""
     data = {
-        "feedback": {
-            "Name": name,
-            "Email": email,
-            "Feedback": feedback,
-            "Timestamp": datetime.now().isoformat()
-        }
+        "Name": name,
+        "Email": email,
+        "Feedback": feedback,
+        "Timestamp": datetime.now().isoformat()
     }
-    response = requests.post(SHEETY_FEEDBACK_URL, json=data, headers=headers)
-    return response.status_code in [200, 201]
+    response = supabase.table(SUPABASE_TABLE).insert(data).execute()
+    # Assuming a successful insertion if response.data is present.
+    return response.data is not None
 
 # ============================
 # Page Configuration & Sidebar
@@ -92,8 +109,6 @@ st.set_page_config(
 st.sidebar.title("Navigation")
 pages = [
     "Overview", 
-    "Competitor Analysis", 
-    "Environmental Impact Tracker", 
     "Personalized Recommendations", 
     "Educational Content",
     "Sustainability Metrics",
@@ -111,52 +126,12 @@ if page == "Overview":
     st.markdown("""
     **Welcome to GreenRoute!**
 
-    In today's competitive market, players such as **Magenta**, **ZeroNorth**, and **Pledge** are vying for leadership in sustainable logistics. 
-    Our advantage lies in our holistic approach, leveraging AI and machine learning for personalized recommendations, environmental tracking, and educational support.
+    Our platform leverages advanced AI, real-time data, and cutting-edge route optimization to help you make sustainable logistics decisions.
+    Explore personalized recommendations, educational content, and an interactive route planner—all designed for today's logistics challenges.
     """)
-    st.image("https://images.unsplash.com/photo-1504384308090-c894fdcc538d", 
+    st.image("https://images.unsplash.com/photo-1504384308090-c894fdcc538d",
              caption="Sustainable Logistics in Action", use_column_width=True)
-    st.markdown("### Explore the features from the sidebar to learn more!")
-
-# ============================
-# Competitor Analysis Page
-# ============================
-elif page == "Competitor Analysis":
-    st.title("Competitor Analysis")
-    st.markdown("### Market Overview")
-    st.markdown("""
-    **Key Competitors:**
-    
-    - **Magenta:** Specializes in electric mobility with significant funding.
-    - **ZeroNorth:** Optimizes tramp shipping operations with a focus on maritime logistics.
-    - **Pledge:** Provides comprehensive emissions management and fuel efficiency solutions.
-    """)
-    competitor_data = {
-        "Competitor": ["Magenta", "ZeroNorth", "Pledge"],
-        "Specialization": ["Electric Mobility", "Tramp Shipping Operations", "Emissions Management"],
-        "Key Strength": ["Significant Funding", "Maritime Logistics Optimization", "Comprehensive Emissions Solutions"]
-    }
-    df_competitors = pd.DataFrame(competitor_data)
-    st.table(df_competitors)
-
-# ============================
-# Environmental Impact Tracker Page
-# ============================
-elif page == "Environmental Impact Tracker":
-    st.title("Environmental Impact Tracker")
-    st.markdown("""
-    **Monitor Your Environmental Impact**
-
-    See real-time insights into CO₂ emissions. Adjust your logistics strategy to reduce your carbon footprint.
-    """)
-    dates = pd.date_range(end=datetime.today(), periods=30).to_pydatetime().tolist()
-    emissions = np.random.normal(loc=50, scale=10, size=30)
-    impact_data = pd.DataFrame({
-        "Date": dates,
-        "CO₂ Emissions (kg)": emissions
-    })
-    st.line_chart(impact_data.set_index("Date"))
-    st.info("Use these insights to make data-driven decisions for reducing emissions.")
+    st.markdown("### Use the sidebar to explore the features!")
 
 # ============================
 # Personalized Recommendations Page
@@ -166,14 +141,14 @@ elif page == "Personalized Recommendations":
     st.markdown("""
     **Tailored Solutions for Your Sustainability Goals**
 
-    Provide your primary sustainability focus below to receive customized recommendations powered by our AI engine.
+    Enter your sustainability focus (e.g., reducing fuel consumption, minimizing emissions) to get customized recommendations powered by our AI engine.
     """)
-    user_goal = st.text_input("Enter your sustainability goal (e.g., reduce fuel consumption, minimize emissions):")
+    user_goal = st.text_input("Enter your sustainability goal:")
     if st.button("Get Recommendation"):
         if user_goal.strip():
-            st.success(f"Based on your goal to **{user_goal.strip()}**, consider leveraging our optimization tools designed to enhance operational efficiency while lowering your carbon footprint.")
+            st.success(f"Based on your goal to **{user_goal.strip()}**, explore our tools designed to optimize operations and reduce environmental impact.")
         else:
-            st.warning("Please enter a sustainability goal to receive a personalized recommendation.")
+            st.warning("Please enter a sustainability goal.")
 
 # ============================
 # Educational Content Page
@@ -182,19 +157,19 @@ elif page == "Educational Content":
     st.title("Educational Content")
     st.markdown("""
     ### Dive into Sustainable Logistics
-    
+
     **Sustainable Logistics:**  
-    A holistic approach that minimizes environmental impact while optimizing supply chain operations. It integrates renewable energy, electric vehicles, and smart route planning.
-    
+    Embrace strategies that minimize environmental impact while optimizing your supply chain. Our resources cover renewable energy, electric vehicles, smart routing, and more.
+
     **Emissions Management:**  
-    Involves tracking, analyzing, and reducing pollutants through cleaner fuels, optimized routes, and data-driven decision making.
-    
-    **The GreenRoute Edge:**  
-    - **Personalized Insights:** Tailored recommendations for sustainability.
-    - **Real-Time Tracking:** Monitor your environmental metrics.
-    - **Learning Resources:** Stay updated on best practices and innovations.
+    Understand best practices for tracking and reducing emissions through advanced data analytics and cleaner technologies.
+
+    **Our Approach:**  
+    - **Personalized Insights:** Custom recommendations to match your goals.
+    - **Real-Time Data:** Stay ahead with live news and analytics.
+    - **Interactive Tools:** Engage with dynamic simulations and educational resources.
     """)
-    st.info("Educate yourself and empower your logistics operations with knowledge.")
+    st.info("Empower your logistics operations with knowledge and innovation.")
 
 # ============================
 # Sustainability Metrics Page
@@ -220,7 +195,7 @@ elif page == "Sustainability Metrics":
         color=alt.Color("Metric:N")
     ).properties(width=700, height=400)
     st.altair_chart(chart, use_container_width=True)
-    st.info("Track these metrics to evaluate your sustainability performance over time.")
+    st.info("Monitor these metrics to evaluate your sustainability performance.")
 
 # ============================
 # Route Optimization Simulator Page
@@ -228,9 +203,9 @@ elif page == "Sustainability Metrics":
 elif page == "Route Optimization Simulator":
     st.title("Route Optimization Simulator")
     st.markdown("""
-    **Simulate Your Route and Estimate Environmental Impact**
+    **Simulate Your Route and Visualize the Optimal Path**
 
-    Input your origin and destination to simulate an optimized route using free APIs.
+    Enter your origin and destination below to calculate the best route. Our system retrieves the full route geometry, estimates travel details, and displays the path interactively.
     """)
     col1, col2 = st.columns(2)
     with col1:
@@ -245,19 +220,45 @@ elif page == "Route Optimization Simulator":
             if None in origin_coords or None in destination_coords:
                 st.error("Could not geocode the provided addresses. Please try different inputs.")
             else:
-                route_info = get_route_info(origin_coords, destination_coords)
-                if route_info:
-                    distance, duration = route_info
-                    emissions_estimated = get_carbon_estimate(distance)
+                result = get_route_info(origin_coords, destination_coords)
+                if result[0] is not None:
+                    distance, duration, geometry = result
                     st.success(f"Optimized route from **{origin}** to **{destination}**:")
                     st.write(f"**Estimated Distance:** {distance:.2f} miles")
                     st.write(f"**Estimated Travel Time:** {duration:.2f} hours")
-                    st.write(f"**Estimated CO₂ Emissions (for a typical car):** {emissions_estimated:.2f} kg")
-                    route_data = pd.DataFrame({
-                        'lat': [origin_coords[0], destination_coords[0]],
-                        'lon': [origin_coords[1], destination_coords[1]]
-                    })
-                    st.map(route_data)
+                    st.write(f"**Estimated CO₂ Emissions:** {get_carbon_estimate(distance):.2f} kg")
+                    
+                    if geometry:
+                        # Calculate center for map view
+                        lats = [coord[1] for coord in geometry]
+                        lons = [coord[0] for coord in geometry]
+                        avg_lat = sum(lats) / len(lats)
+                        avg_lon = sum(lons) / len(lons)
+                        
+                        # Create a PathLayer to draw the route
+                        route_layer = pdk.Layer(
+                            "PathLayer",
+                            data=[{"path": geometry, "name": "Route"}],
+                            get_path="path",
+                            get_color="[255, 0, 0, 255]",
+                            width_scale=20,
+                            width_min_pixels=2,
+                            get_width=5,
+                        )
+                        view_state = pdk.ViewState(
+                            latitude=avg_lat,
+                            longitude=avg_lon,
+                            zoom=6,
+                            pitch=0,
+                        )
+                        deck = pdk.Deck(
+                            layers=[route_layer],
+                            initial_view_state=view_state,
+                            tooltip={"text": "{name}"}
+                        )
+                        st.pydeck_chart(deck)
+                    else:
+                        st.error("Route geometry not available.")
                 else:
                     st.error("Could not retrieve route information. Please try again later.")
         else:
@@ -271,7 +272,7 @@ elif page == "Real-Time News":
     st.markdown("""
     **Stay Updated with the Latest in Sustainable Logistics**
 
-    We fetch live news articles using a free API to keep you informed on the latest trends and innovations.
+    We fetch live news articles using NewsAPI to keep you informed about trends and innovations in the logistics industry.
     """)
     query = "sustainable logistics"
     articles = get_news_articles(query)
@@ -282,7 +283,7 @@ elif page == "Real-Time News":
             st.markdown(f"[Read more]({article.get('url', '#')})")
             st.markdown("---")
     else:
-        st.info("No real-time news available. Please ensure you have set your News API key in st.secrets.")
+        st.info("No real-time news available. Please ensure you have set your News API key correctly.")
 
 # ============================
 # User Feedback Page
@@ -301,8 +302,7 @@ elif page == "User Feedback":
         submitted = st.form_submit_button("Submit Feedback")
         if submitted:
             if name and email and feedback:
-                # Save feedback using Sheety
-                success = save_feedback_to_sheet(name, email, feedback)
+                success = save_feedback_to_supabase(name, email, feedback)
                 if success:
                     st.success("Thank you for your feedback! It has been successfully saved.")
                 else:
