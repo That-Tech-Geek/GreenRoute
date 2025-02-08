@@ -340,43 +340,45 @@ elif page == "Route Optimization Simulator":
                     st.write(f"**Estimated Travel Time:** {duration:.2f} hours")
                     st.write(f"**Estimated CO₂ Emissions Saved:** {emissions_estimated:.2f} kg")
                     
-                    # Debug output: Print geometry to verify its content
+                    # Debug: print geometry to verify format
                     st.write("DEBUG: Route geometry:", geometry)
                     
-                    # Update persistent metrics in Supabase (clearing cache inside update)
+                    # Update persistent metrics in Supabase
                     update_metrics_in_db(new_routes=1, new_emissions=emissions_estimated)
                     
-                    if geometry and len(geometry) >= 2:
-                        # Calculate center for map view using the geometry
-                        lats = [coord[1] for coord in geometry]
-                        lons = [coord[0] for coord in geometry]
-                        avg_lat = sum(lats) / len(lats)
-                        avg_lon = sum(lons) / len(lons)
-                        
-                        # Create a PathLayer to draw the route
-                        route_layer = pdk.Layer(
-                            "PathLayer",
-                            data=[{"path": geometry, "name": "Route"}],
-                            get_path="path",
-                            get_color="[255, 0, 0, 255]",
-                            width_scale=20,
-                            width_min_pixels=2,
-                            get_width=5,
-                        )
-                        view_state = pdk.ViewState(
-                            latitude=avg_lat,
-                            longitude=avg_lon,
-                            zoom=6,
-                            pitch=0,
-                        )
-                        deck = pdk.Deck(
-                            layers=[route_layer],
-                            initial_view_state=view_state,
-                            tooltip={"text": "{name}"}
-                        )
-                        st.pydeck_chart(deck)
-                    else:
-                        st.error("Route geometry not available or invalid. Please check the OSRM response.")
+                    # Fallback: if geometry is empty or invalid, use a straight-line route
+                    if not geometry or len(geometry) < 2:
+                        st.error("Route geometry not available from OSRM. Using fallback straight line.")
+                        geometry = [[origin_coords[1], origin_coords[0]], [destination_coords[1], destination_coords[0]]]
+                    
+                    # Calculate map center from the geometry
+                    lats = [coord[1] for coord in geometry]
+                    lons = [coord[0] for coord in geometry]
+                    avg_lat = sum(lats) / len(lats)
+                    avg_lon = sum(lons) / len(lons)
+                    
+                    # Create a PathLayer to draw the route
+                    route_layer = pdk.Layer(
+                        "PathLayer",
+                        data=[{"path": geometry, "name": "Route"}],
+                        get_path="path",
+                        get_color="[255, 0, 0, 255]",
+                        width_scale=20,
+                        width_min_pixels=2,
+                        get_width=5,
+                    )
+                    view_state = pdk.ViewState(
+                        latitude=avg_lat,
+                        longitude=avg_lon,
+                        zoom=6,
+                        pitch=0,
+                    )
+                    deck = pdk.Deck(
+                        layers=[route_layer],
+                        initial_view_state=view_state,
+                        tooltip={"text": "{name}"}
+                    )
+                    st.pydeck_chart(deck)
                     
                     # Link sustainability metrics: fetch updated metrics and display a summary
                     updated_metrics = get_metrics_from_db()
@@ -390,6 +392,7 @@ elif page == "Route Optimization Simulator":
                     st.error("Could not retrieve route information. Please try again later.")
         else:
             st.warning("Please enter both origin and destination.")
+
 
 # ============================
 # Real-Time News Page
