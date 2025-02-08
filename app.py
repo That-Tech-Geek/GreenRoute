@@ -294,7 +294,7 @@ elif page == "Sustainability Metrics":
     st.write(f"**Total Kilometers Simulated:** {total_distance:.2f} km")
     st.write(f"**Total CO₂ Emissions Saved:** {total_emissions_saved:.2f} kg")
     st.write(f"**Average Emissions Saved per Kilometer:** {avg_emissions_saved:.2f} kg/km")
-    st.write(f"**Estimated Fuel Savings:**{fuel_savings:.2f} Liters")
+    st.write(f"**Estimated Fuel Savings:** {fuel_savings:.2f} Liters")
     
     metrics_df = pd.DataFrame({
         "Metric": [
