@@ -36,20 +36,19 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 def init_db():
     conn = sqlite3.connect("metrics.db", check_same_thread=False)
     c = conn.cursor()
-    # Create table if it doesn't exist
+    # Create table if it doesn't exist (fuel savings removed)
     c.execute("""
         CREATE TABLE IF NOT EXISTS sustainability_metrics (
             id INTEGER PRIMARY KEY,
             total_distance REAL,
-            total_emissions_saved REAL,
-            fuel_savings REAL
+            total_emissions_saved REAL
         )
     """)
     # Check if the table has at least one row; if not, insert initial values.
     c.execute("SELECT * FROM sustainability_metrics LIMIT 1")
     if c.fetchone() is None:
-        c.execute("INSERT INTO sustainability_metrics (total_distance, total_emissions_saved, fuel_savings) VALUES (?, ?, ?)",
-                  (0.0, 0.0, 0.0))
+        c.execute("INSERT INTO sustainability_metrics (total_distance, total_emissions_saved) VALUES (?, ?)",
+                  (0.0, 0.0))
         conn.commit()
     conn.close()
 
@@ -60,12 +59,12 @@ def get_metrics_from_db():
     """Retrieve sustainability metrics from SQLite and return as a dict."""
     conn = sqlite3.connect("metrics.db", check_same_thread=False)
     c = conn.cursor()
-    c.execute("SELECT total_distance, total_emissions_saved, fuel_savings FROM sustainability_metrics LIMIT 1")
+    c.execute("SELECT total_distance, total_emissions_saved FROM sustainability_metrics LIMIT 1")
     row = c.fetchone()
     conn.close()
     if row is None:
-        return {"total_distance": 0.0, "total_emissions_saved": 0.0, "fuel_savings": 0.0}
-    return {"total_distance": row[0], "total_emissions_saved": row[1], "fuel_savings": row[2]}
+        return {"total_distance": 0.0, "total_emissions_saved": 0.0}
+    return {"total_distance": row[0], "total_emissions_saved": row[1]}
 
 def update_metrics_in_db(new_distance: float, new_emissions: float):
     """
@@ -73,20 +72,18 @@ def update_metrics_in_db(new_distance: float, new_emissions: float):
     new_distance: distance in kilometers
     new_emissions: emissions saved in kg CO₂
     """
-    fuel_saving_per_km = 2.0  # adjust as needed
     conn = sqlite3.connect("metrics.db", check_same_thread=False)
     c = conn.cursor()
-    c.execute("SELECT total_distance, total_emissions_saved, fuel_savings FROM sustainability_metrics LIMIT 1")
+    c.execute("SELECT total_distance, total_emissions_saved FROM sustainability_metrics LIMIT 1")
     row = c.fetchone()
     if row is None:
-        current_distance, current_emissions, current_fuel = 0.0, 0.0, 0.0
+        current_distance, current_emissions = 0.0, 0.0
     else:
-        current_distance, current_emissions, current_fuel = row
+        current_distance, current_emissions = row
     new_total_distance = current_distance + new_distance
     new_total_emissions = current_emissions + new_emissions
-    new_fuel_savings = current_fuel + new_distance * fuel_saving_per_km
-    c.execute("UPDATE sustainability_metrics SET total_distance = ?, total_emissions_saved = ?, fuel_savings = ? WHERE id = 1", 
-              (new_total_distance, new_total_emissions, new_fuel_savings))
+    c.execute("UPDATE sustainability_metrics SET total_distance = ?, total_emissions_saved = ? WHERE id = 1", 
+              (new_total_distance, new_total_emissions))
     conn.commit()
     conn.close()
     get_metrics_from_db.clear()  # Clear cache so updated values are returned
@@ -286,25 +283,23 @@ elif page == "Sustainability Metrics":
     metrics = get_sustainability_metrics()
     total_distance = metrics.get("total_distance", 0.0)
     total_emissions_saved = metrics.get("total_emissions_saved", 0.0)
-    fuel_savings = metrics.get("fuel_savings", 0.0)
     
     avg_emissions_saved = total_emissions_saved / total_distance if total_distance else 0
 
     st.write(f"**Total Kilometers Simulated:** {total_distance:.2f} km")
     st.write(f"**Total CO₂ Emissions Saved:** {total_emissions_saved:.2f} kg")
     st.write(f"**Average Emissions Saved per Kilometer:** {avg_emissions_saved:.2f} kg/km")
-   
+    
     metrics_df = pd.DataFrame({
         "Metric": [
             "Total Kilometers Simulated",
             "Total Emissions Saved (kg)",
-            "Avg Emissions per km (kg/km)",
+            "Avg Emissions per km (kg/km)"
         ],
         "Value": [
             total_distance,
             total_emissions_saved,
-            avg_emissions_saved,
-            fuel_savings
+            avg_emissions_saved
         ]
     })
     chart = alt.Chart(metrics_df).mark_bar().encode(
@@ -427,5 +422,18 @@ elif page == "User Feedback":
                 st.warning("Please fill in all fields before submitting.")
 elif page == "Sceptical?":
     st.title("How this program works")
-    text = "The code calculates and updates its sustainability metrics by storing and aggregating values in a local SQLite database. Initially, a table named sustainability_metrics is created (if it does not already exist) with three columns: total_distance, total_emissions_saved, and fuel_savings. When the database is initialized, a single row with zeros is inserted if no data exists.Whenever the dashboard needs to display metrics, the function that retrieves data from the database (get_metrics_from_db) is called. This function connects to the SQLite database, reads the current values for total_distance, total_emissions_saved, and fuel_savings, and returns these in a dictionary. To improve performance, the result is cached; however, the cache is cleared after any update so that new values are immediately visible.When a user simulates a route using the Route Optimization Simulator page, the code first calls an external API (OSRM) to obtain route information. This API returns the route’s distance (in miles), duration (in hours), and the route geometry. The distance is then used in two calculations. First, it is converted from miles to kilometers (by multiplying by 1.60934) so that it matches the unit used in the database. Second, the function get_carbon_estimate estimates the CO₂ emissions saved by multiplying the distance in miles by a constant factor (0.411 kg CO₂ per mile).The update_metrics_in_db function reads the current metric values from the database and then updates them by adding the new route’s data. The new total distance becomes the previous distance plus the newly simulated distance (in kilometers). Similarly, the new total emissions saved is the previous value plus the estimated CO₂ saved from the current route. After updating, the new values are written back to the database and the cache is cleared to ensure that the updated metrics are displayed.On the Sustainability Metrics page, the dashboard displays the cumulative total kilometers simulated, and total CO₂ emissions saved. It also calculates the average emissions saved per kilometer by dividing the total CO₂ emissions saved by the total distance simulated (with a safeguard for division by zero). These values are then visualized using a bar chart generated with Altair.In summary, the code uses external APIs to calculate route details, applies fixed conversion factors to estimate emissions, and aggregates these metrics over multiple route simulations by continuously updating a SQLite database."
+    text = (
+        "The code calculates and updates its sustainability metrics by storing and aggregating values in a local SQLite database. "
+        "Initially, a table named sustainability_metrics is created (if it does not already exist) with two columns: total_distance and total_emissions_saved. "
+        "When the database is initialized, a single row with zeros is inserted if no data exists. Whenever the dashboard needs to display metrics, the function that retrieves data from the database (get_metrics_from_db) is called. "
+        "This function connects to the SQLite database, reads the current values for total_distance and total_emissions_saved, and returns these in a dictionary. To improve performance, the result is cached; however, the cache is cleared after any update so that new values are immediately visible. "
+        "When a user simulates a route using the Route Optimization Simulator page, the code first calls an external API (OSRM) to obtain route information. This API returns the route’s distance (in miles), duration (in hours), and the route geometry. "
+        "The distance is then used in two calculations. First, it is converted from miles to kilometers (by multiplying by 1.60934) so that it matches the unit used in the database. "
+        "Second, the function get_carbon_estimate estimates the CO₂ emissions saved by multiplying the distance in miles by a constant factor (0.411 kg CO₂ per mile). "
+        "The update_metrics_in_db function reads the current metric values from the database and then updates them by adding the new route’s data. "
+        "The new total distance becomes the previous distance plus the newly simulated distance (in kilometers), and the new total emissions saved is the previous value plus the estimated CO₂ saved from the current route. "
+        "After updating, the new values are written back to the database and the cache is cleared to ensure that the updated metrics are displayed. "
+        "On the Sustainability Metrics page, the dashboard displays the cumulative total kilometers simulated and total CO₂ emissions saved. "
+        "These values are then visualized using a bar chart generated with Altair."
+    )
     st.write(text)
