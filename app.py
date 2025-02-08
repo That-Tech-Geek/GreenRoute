@@ -6,19 +6,22 @@ import pydeck as pdk
 import requests
 from datetime import datetime
 from supabase import create_client, Client
+import cohere
 
 # ============================
 # API KEYS and CONFIGURATION
 # ============================
-# NewsAPI key is under [api_keys]
 API_KEYS = st.secrets.get("api_keys", {})
 NEWS_API_KEY = API_KEYS.get("news_api_key", "YOUR_NEWS_API_KEY")
 
-# Supabase credentials under [supabase]
 SUPABASE_CONFIG = st.secrets.get("supabase", {})
 SUPABASE_URL = SUPABASE_CONFIG.get("url", "YOUR_SUPABASE_PROJECT_URL")
 SUPABASE_ANON_KEY = SUPABASE_CONFIG.get("anon_key", "YOUR_SUPABASE_ANON_KEY")
 SUPABASE_TABLE = SUPABASE_CONFIG.get("table_name", "feedback")
+
+# Cohere API key
+COHERE_API_KEY = st.secrets["COHERE_API_KEY"]
+cohere_client = cohere.Client(COHERE_API_KEY)
 
 # Initialize Supabase Client
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
@@ -28,9 +31,8 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 # ============================
 
 def get_coordinates(address):
-    """Geocode an address using the free Nominatim API."""
     url = f"https://nominatim.openstreetmap.org/search?q={address}&format=json&limit=1"
-    response = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
+    response = requests.get(url, headers={'User -Agent': 'Mozilla/5.0'})
     if response.status_code == 200:
         data = response.json()
         if data:
@@ -40,11 +42,6 @@ def get_coordinates(address):
     return None, None
 
 def get_route_info(origin_coords, destination_coords):
-    """
-    Retrieve route info using OSRM API.
-    Returns distance (miles), duration (hours), and route geometry as a GeoJSON LineString.
-    """
-    # OSRM expects coordinates in lon,lat order.
     start_lon, start_lat = origin_coords[1], origin_coords[0]
     end_lon, end_lat = destination_coords[1], destination_coords[0]
     url = (
@@ -64,16 +61,11 @@ def get_route_info(origin_coords, destination_coords):
     return None, None, None
 
 def get_carbon_estimate(distance, vehicle_type='car'):
-    """
-    Estimate CO₂ emissions for a given distance (miles).
-    Example: a typical car emits ~0.411 kg CO₂ per mile.
-    """
     return distance * 0.411
 
 def get_news_articles(query):
-    """Fetch news articles using NewsAPI."""
     if not NEWS_API_KEY or NEWS_API_KEY == "YOUR_NEWS_API_KEY":
-        return []  # No API key provided, so no live news
+        return []
     url = (
         f"https://newsapi.org/v2/everything?q={query}&sortBy=publishedAt"
         f"&apiKey={NEWS_API_KEY}&language=en&pageSize=5"
@@ -86,7 +78,6 @@ def get_news_articles(query):
     return []
 
 def save_feedback_to_supabase(name, email, feedback):
-    """Save user feedback to Supabase."""
     data = {
         "Name": name,
         "Email": email,
@@ -94,8 +85,19 @@ def save_feedback_to_supabase(name, email, feedback):
         "Timestamp": datetime.now().isoformat()
     }
     response = supabase.table(SUPABASE_TABLE).insert(data).execute()
-    # Assuming a successful insertion if response.data is present.
     return response.data is not None
+
+def generate_recommendations(user_goal):
+    """Generate recommendations using Cohere API."""
+    prompt = f"Based on the sustainability goal of '{user_goal}', provide tailored recommendations for reducing environmental impact in logistics."
+    response = cohere_client.generate(
+        model='command',
+        prompt=prompt,
+        max_tokens=15000,
+        temperature=0.7,
+        stop_sequences=["--"]
+    )
+    return response.generations[0].text.strip()
 
 # ============================
 # Page Configuration & Sidebar
@@ -114,9 +116,18 @@ pages = [
     "Sustainability Metrics",
     "Route Optimization Simulator",
     "Real-Time News",
-    "User Feedback"
+    "User  Feedback"
 ]
 page = st.sidebar.radio("Go to", pages)
+
+# Initialize session state for sustainability metrics
+if 'sustainability_metrics' not in st.session_state:
+    st.session_state.sustainability_metrics = {
+        "Total Emissions Reduced (kg)": 0,
+        "Fuel Savings (liters)": 0,
+        "Cost Savings (USD)": 0,
+        "Optimized Routes": 0
+    }
 
 # ============================
 # Overview Page
@@ -146,7 +157,9 @@ elif page == "Personalized Recommendations":
     user_goal = st.text_input("Enter your sustainability goal:")
     if st.button("Get Recommendation"):
         if user_goal.strip():
-            st.success(f"Based on your goal to **{user_goal.strip()}**, explore our tools designed to optimize operations and reduce environmental impact.")
+            recommendation = generate_recommendations(user_goal.strip())
+            st.success(f"Based on your goal to **{user_goal.strip()}**, here are some recommendations:")
+            st.write(recommendation)
         else:
             st.warning("Please enter a sustainability goal.")
 
@@ -177,12 +190,7 @@ elif page == "Educational Content":
 elif page == "Sustainability Metrics":
     st.title("Sustainability Metrics")
     st.markdown("### Comprehensive Metrics Dashboard")
-    metrics = {
-        "Total Emissions Reduced (kg)": np.random.randint(1000, 5000),
-        "Fuel Savings (liters)": np.random.randint(200, 1000),
-        "Cost Savings (USD)": np.random.randint(5000, 20000),
-        "Optimized Routes": np.random.randint(50, 200)
-    }
+    metrics = st.session_state.sustainability_metrics
     st.subheader("Key Performance Indicators")
     st.write(metrics)
     df_metrics = pd.DataFrame({
@@ -223,19 +231,23 @@ elif page == "Route Optimization Simulator":
                 result = get_route_info(origin_coords, destination_coords)
                 if result[0] is not None:
                     distance, duration, geometry = result
+                    emissions = get_carbon_estimate(distance)
+                    
+                    # Update sustainability metrics in session state
+                    st.session_state.sustainability_metrics["Total Emissions Reduced (kg)"] += emissions
+                    st.session_state.sustainability_metrics["Optimized Routes"] += 1
+                    
                     st.success(f"Optimized route from **{origin}** to **{destination}**:")
                     st.write(f"**Estimated Distance:** {distance:.2f} miles")
                     st.write(f"**Estimated Travel Time:** {duration:.2f} hours")
-                    st.write(f"**Estimated CO₂ Emissions:** {get_carbon_estimate(distance):.2f} kg")
+                    st.write(f"**Estimated CO₂ Emissions:** {emissions:.2f} kg")
                     
                     if geometry:
-                        # Calculate center for map view
                         lats = [coord[1] for coord in geometry]
                         lons = [coord[0] for coord in geometry]
                         avg_lat = sum(lats) / len(lats)
                         avg_lon = sum(lons) / len(lons)
                         
-                        # Create a PathLayer to draw the route
                         route_layer = pdk.Layer(
                             "PathLayer",
                             data=[{"path": geometry, "name": "Route"}],
@@ -288,8 +300,8 @@ elif page == "Real-Time News":
 # ============================
 # User Feedback Page
 # ============================
-elif page == "User Feedback":
-    st.title("User Feedback")
+elif page == "User  Feedback":
+    st.title("User  Feedback")
     st.markdown("""
     **We Value Your Input**
 
