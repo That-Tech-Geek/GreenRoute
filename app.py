@@ -57,7 +57,7 @@ def update_metrics_in_db(new_routes: int, new_emissions: float):
     """
     Update the sustainability metrics in Supabase by adding new data.
     After updating the DB, clear the cache so that subsequent calls fetch the latest data.
-    This function attempts to include 'cost_savings'; if that column is missing, it omits it.
+    If the cost_savings column is missing, it will be omitted.
     """
     fuel_saving_per_route = 50   # e.g., each route saves 50 liters
     cost_saving_per_route = 100    # e.g., each route saves $100
@@ -75,8 +75,8 @@ def update_metrics_in_db(new_routes: int, new_emissions: float):
         try:
             supabase.table(IMPACT_TABLE).insert(new_metrics).execute()
         except Exception as e:
-            st.error("Error inserting new metrics (with cost_savings): " + str(e))
-            # Remove cost_savings and try again
+            st.error("Error inserting new metrics with cost_savings: " + str(e))
+            # If the error indicates the cost_savings column is missing, remove it and try again.
             if "cost_savings" in new_metrics:
                 del new_metrics["cost_savings"]
             supabase.table(IMPACT_TABLE).insert(new_metrics).execute()
@@ -87,7 +87,7 @@ def update_metrics_in_db(new_routes: int, new_emissions: float):
             "total_emissions_saved": current.get("total_emissions_saved", 0) + new_emissions,
             "fuel_savings": current.get("fuel_savings", 0) + new_routes * fuel_saving_per_route,
         }
-        # Only update cost_savings if it exists in the current record.
+        # Only add cost_savings to the update payload if it exists in the current record.
         if "cost_savings" in current:
             updated["cost_savings"] = current.get("cost_savings", 0) + new_routes * cost_saving_per_route
 
@@ -97,7 +97,7 @@ def update_metrics_in_db(new_routes: int, new_emissions: float):
         except Exception as e:
             st.error("Error updating metrics: " + str(e))
     
-    # Clear the cache for get_metrics_from_db so that the next call returns updated data.
+    # Clear the cache so that the next call to get_metrics_from_db returns fresh data.
     get_metrics_from_db.clear()
 
 # ============================
