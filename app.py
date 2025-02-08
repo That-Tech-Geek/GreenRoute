@@ -20,12 +20,12 @@ from streamlit_folium import folium_static
 # API KEYS and CONFIGURATION
 # ============================
 API_KEYS = st.secrets.get("NEWS-API", {})
-NEWS_API_KEY = API_KEYS.get("NEWS_API", "YOUR_NEWS_API_KEY")  # from NEWS-API section
-COHERE_API_KEY = API_KEYS.get("COHERE_API_KEY", "YOUR_COHERE_API_KEY")
+NEWS_API_KEY = API_KEYS.get("NEWS_API", "NEWS_API_KEY")  # from NEWS-API section
+COHERE_API_KEY = API_KEYS.get("COHERE_API_KEY", "COHERE_API_KEY")
 
 SUPABASE_CONFIG = st.secrets.get("supabase", {})
-SUPABASE_URL = SUPABASE_CONFIG.get("url", "YOUR_SUPABASE_PROJECT_URL")
-SUPABASE_ANON_KEY = SUPABASE_CONFIG.get("anon_key", "YOUR_SUPABASE_ANON_KEY")
+SUPABASE_URL = SUPABASE_CONFIG.get("url", "SUPABASE_PROJECT_URL")
+SUPABASE_ANON_KEY = SUPABASE_CONFIG.get("anon_key", "SUPABASE_ANON_KEY")
 SUPABASE_TABLE = SUPABASE_CONFIG.get("table_name", "feedback")
 
 # Initialize Supabase Client (used for feedback)
@@ -173,7 +173,7 @@ def get_carbon_estimate(distance, vehicle_type='car'):
 
 def get_news_articles(query):
     """Fetch news articles using NewsAPI."""
-    if not NEWS_API_KEY or NEWS_API_KEY == "YOUR_NEWS_API_KEY":
+    if not NEWS_API_KEY or NEWS_API_KEY == "NEWS_API_KEY":
         return []  # No API key provided
     url = (
         f"https://newsapi.org/v2/everything?q={query}&sortBy=publishedAt"
