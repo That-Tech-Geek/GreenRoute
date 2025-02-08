@@ -8,12 +8,12 @@ st.set_page_config(
 import pandas as pd
 import numpy as np
 import altair as alt
+import folium
 import requests
 from datetime import datetime
 from supabase import create_client, Client
 import cohere  # For generating advice
-import folium
-from streamlit_folium import st_folium
+from streamlit_folium import folium_static
 
 # ============================
 # API KEYS and CONFIGURATION
@@ -26,66 +26,37 @@ SUPABASE_CONFIG = st.secrets.get("supabase", {})
 SUPABASE_URL = SUPABASE_CONFIG.get("url", "YOUR_SUPABASE_PROJECT_URL")
 SUPABASE_ANON_KEY = SUPABASE_CONFIG.get("anon_key", "YOUR_SUPABASE_ANON_KEY")
 SUPABASE_TABLE = SUPABASE_CONFIG.get("table_name", "feedback")
-# For sustainability metrics, we are now using Sheety (see below)
+# (Sustainability metrics will now be stored in st.session_state)
+
+# Initialize Supabase Client (used for feedback)
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 
 # ============================
-# Sheety Metrics Functions
+# Initialize Sustainability Metrics in Session State
 # ============================
-SHEETY_CONFIG = st.secrets.get("sheety", {})
-SHEETY_METRICS_URL = SHEETY_CONFIG.get("metrics_url", "YOUR_SHEETY_METRICS_URL")
+if "sustainability_metrics" not in st.session_state:
+    st.session_state.sustainability_metrics = {
+        "routes_simulated": 0,
+        "total_emissions_saved": 0,
+        "fuel_savings": 0
+    }
 
-@st.cache_data
-def get_metrics_from_sheety():
+def update_sustainability_metrics(new_routes: int, new_emissions: float):
     """
-    Retrieve the current sustainability metrics from the Sheety API.
-    Expects the API to return JSON with a key "metrics" that is a list.
+    Update the sustainability metrics stored in st.session_state.
     """
-    response = requests.get(SHEETY_METRICS_URL)
-    if response.status_code == 200:
-        data = response.json()
-        if "metrics" in data and len(data["metrics"]) > 0:
-            return data["metrics"][0]
-        else:
-            return {"routes_simulated": 0, "total_emissions_saved": 0, "fuel_savings": 0}
-    else:
-        st.error("Error fetching metrics from Sheety: " + str(response.status_code))
-        return {"routes_simulated": 0, "total_emissions_saved": 0, "fuel_savings": 0}
+    fuel_saving_per_route = 50  # e.g., each route saves 50 liters
+    metrics = st.session_state.sustainability_metrics
+    metrics["routes_simulated"] += new_routes
+    metrics["total_emissions_saved"] += new_emissions
+    metrics["fuel_savings"] += new_routes * fuel_saving_per_route
+    st.session_state.sustainability_metrics = metrics
 
-def update_metrics_in_sheety(new_routes: int, new_emissions: float):
+def get_sustainability_metrics():
     """
-    Update the sustainability metrics in Sheety by adding new data.
-    If no metrics exist, create a new row; otherwise, update the existing row.
-    Clears the cache after updating.
+    Return the current sustainability metrics from st.session_state.
     """
-    fuel_saving_per_route = 50   # e.g., each route saves 50 liters
-    current_metrics = get_metrics_from_sheety()
-    
-    if (current_metrics.get("routes_simulated", 0) == 0 and 
-        current_metrics.get("total_emissions_saved", 0) == 0 and 
-        current_metrics.get("fuel_savings", 0) == 0):
-        new_metrics = {
-            "routes_simulated": new_routes,
-            "total_emissions_saved": new_emissions,
-            "fuel_savings": new_routes * fuel_saving_per_route
-        }
-        response = requests.post(SHEETY_METRICS_URL, json={"metrics": new_metrics})
-        if response.status_code not in [200, 201]:
-            st.error("Error inserting new metrics: " + response.text)
-    else:
-        updated = {
-            "routes_simulated": current_metrics.get("routes_simulated", 0) + new_routes,
-            "total_emissions_saved": current_metrics.get("total_emissions_saved", 0) + new_emissions,
-            "fuel_savings": current_metrics.get("fuel_savings", 0) + new_routes * fuel_saving_per_route
-        }
-        row_id = current_metrics.get("id")
-        if row_id:
-            update_url = SHEETY_METRICS_URL + f"/{row_id}"
-            response = requests.put(update_url, json={"metrics": updated})
-            if response.status_code not in [200, 201]:
-                st.error("Error updating metrics: " + response.text)
-        else:
-            st.error("No row id found for metrics update.")
-    get_metrics_from_sheety.clear()
+    return st.session_state.sustainability_metrics
 
 # ============================
 # Cohere Advice Function
@@ -146,7 +117,7 @@ def get_route_info(origin_coords, destination_coords):
             duration = route["duration"] / 3600.0     # convert seconds to hours
             geometry = route.get("geometry", {}).get("coordinates", [])
             # Fallback: if geometry is empty, use a straight-line path
-            if not geometry:
+            if not geometry or len(geometry) < 2:
                 geometry = [[start_lon, start_lat], [end_lon, end_lat]]
             return distance, duration, geometry
     return None, None, None
@@ -270,8 +241,8 @@ elif page == "Sustainability Metrics":
     st.title("Sustainability Metrics")
     st.markdown("### Overall Impact of GreenRoute")
     
-    # Retrieve persistent metrics from Sheety (cached)
-    metrics = get_metrics_from_sheety()
+    # Retrieve metrics from st.session_state
+    metrics = get_sustainability_metrics()
     routes_simulated = metrics.get("routes_simulated", 0)
     total_emissions_saved = metrics.get("total_emissions_saved", 0)
     fuel_savings = metrics.get("fuel_savings", 0)
@@ -326,13 +297,11 @@ elif page == "Route Optimization Simulator":
     
     if st.button("Simulate Route"):
         if origin and destination:
-            # Retrieve coordinates using Nominatim (returns (lat, lon))
-            origin_coords = get_coordinates(origin)
-            destination_coords = get_coordinates(destination)
+            origin_coords = get_coordinates(origin)  # (lat, lon)
+            destination_coords = get_coordinates(destination)  # (lat, lon)
             if None in origin_coords or None in destination_coords:
                 st.error("Could not geocode the provided addresses. Please try different inputs.")
             else:
-                # Retrieve route info from OSRM API
                 result = get_route_info(origin_coords, destination_coords)
                 if result[0] is not None:
                     distance, duration, geometry = result
@@ -342,30 +311,38 @@ elif page == "Route Optimization Simulator":
                     st.write(f"**Estimated Travel Time:** {duration:.2f} hours")
                     st.write(f"**Estimated CO₂ Emissions Saved:** {emissions_estimated:.2f} kg")
                     
-                    # If geometry is invalid, fallback to a straight-line route.
+                    # Update sustainability metrics in session state
+                    update_sustainability_metrics(new_routes=1, new_emissions=emissions_estimated)
+                    
+                    # If geometry is invalid, fallback to a straight-line path
                     if not geometry or len(geometry) < 2:
                         geometry = [[origin_coords[1], origin_coords[0]], [destination_coords[1], destination_coords[0]]]
                     
-                    # Convert OSRM geometry from [lon, lat] to [lat, lon] (for Folium)
+                    # Convert OSRM geometry ([lon, lat]) to Folium format ([lat, lon])
                     folium_geometry = [[pt[1], pt[0]] for pt in geometry]
                     
                     # Calculate map center from the route geometry
                     center_lat = sum(pt[0] for pt in folium_geometry) / len(folium_geometry)
                     center_lon = sum(pt[1] for pt in folium_geometry) / len(folium_geometry)
                     
-                    # Create a Folium map centered on the route
+                    # Create a Folium map centered at the calculated center
                     m = folium.Map(location=[center_lat, center_lon], zoom_start=6)
                     # Add the route as a polyline
                     folium.PolyLine(locations=folium_geometry, color="red", weight=5).add_to(m)
-                    # Add markers for origin and destination
+                    # Add markers for the origin and destination
                     folium.Marker(location=[origin_coords[0], origin_coords[1]], popup="Origin").add_to(m)
                     folium.Marker(location=[destination_coords[0], destination_coords[1]], popup="Destination").add_to(m)
                     
-                    # Render the map using folium_static (which directly embeds the map's HTML)
-                    from streamlit_folium import folium_static
+                    # Display the Folium map using folium_static
                     folium_static(m, width=700, height=500)
                     
-                    st.info("The map above shows the optimized route along with markers for the origin and destination.")
+                    # Optionally, display updated sustainability metrics immediately
+                    metrics = get_sustainability_metrics()
+                    st.markdown("### Updated Sustainability Impact")
+                    st.write(f"**Total Routes Simulated:** {metrics.get('routes_simulated', 0)}")
+                    st.write(f"**Total CO₂ Emissions Saved:** {metrics.get('total_emissions_saved', 0):.2f} kg")
+                    st.write(f"**Estimated Fuel Savings:** {metrics.get('fuel_savings', 0)} liters")
+                    st.info("For a more detailed view, please check the 'Sustainability Metrics' page in the sidebar.")
                 else:
                     st.error("Could not retrieve route information. Please try again later.")
         else:
