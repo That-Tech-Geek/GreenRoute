@@ -18,12 +18,12 @@ import cohere  # Import Cohere for generating advice
 # API KEYS and CONFIGURATION
 # ============================
 API_KEYS = st.secrets.get("NEWS-API", {})
-NEWS_API_KEY = API_KEYS.get("NEWS_API", "NEWS_API_KEY")  # using key NEWS_API from the NEWS-API section
-COHERE_API_KEY = API_KEYS.get("COHERE_API_KEY", "COHERE_API_KEY")
+NEWS_API_KEY = API_KEYS.get("NEWS_API", "YOUR_NEWS_API_KEY")  # using key NEWS_API from the NEWS-API section
+COHERE_API_KEY = API_KEYS.get("COHERE_API_KEY", "YOUR_COHERE_API_KEY")
 
 SUPABASE_CONFIG = st.secrets.get("supabase", {})
-SUPABASE_URL = SUPABASE_CONFIG.get("url", "SUPABASE_PROJECT_URL")
-SUPABASE_ANON_KEY = SUPABASE_CONFIG.get("anon_key", "SUPABASE_ANON_KEY")
+SUPABASE_URL = SUPABASE_CONFIG.get("url", "YOUR_SUPABASE_PROJECT_URL")
+SUPABASE_ANON_KEY = SUPABASE_CONFIG.get("anon_key", "YOUR_SUPABASE_ANON_KEY")
 SUPABASE_TABLE = SUPABASE_CONFIG.get("table_name", "feedback")
 # Table for sustainability metrics will now use the key 'impact_table'
 IMPACT_TABLE = SUPABASE_CONFIG.get("impact_table", "Impact")
@@ -45,6 +45,7 @@ def get_metrics_from_db():
     if data:
         return data[0]
     else:
+        # Return all fields; if cost_savings is missing, it won't be present.
         return {
             "routes_simulated": 0,
             "total_emissions_saved": 0,
@@ -56,31 +57,47 @@ def update_metrics_in_db(new_routes: int, new_emissions: float):
     """
     Update the sustainability metrics in Supabase by adding new data.
     After updating the DB, clear the cache so that subsequent calls fetch the latest data.
+    This function attempts to include 'cost_savings'; if that column is missing, it omits it.
     """
     fuel_saving_per_route = 50   # e.g., each route saves 50 liters
     cost_saving_per_route = 100    # e.g., each route saves $100
-    
+
     res = supabase.table(IMPACT_TABLE).select("*").execute()
     data = res.data
+
     if not data:
         new_metrics = {
             "routes_simulated": new_routes,
             "total_emissions_saved": new_emissions,
             "fuel_savings": new_routes * fuel_saving_per_route,
-            "cost_savings": new_routes * cost_saving_per_route   # Using "cost_savings" consistently
+            "cost_savings": new_routes * cost_saving_per_route
         }
-        supabase.table(IMPACT_TABLE).insert(new_metrics).execute()
+        try:
+            supabase.table(IMPACT_TABLE).insert(new_metrics).execute()
+        except Exception as e:
+            st.error("Error inserting new metrics (with cost_savings): " + str(e))
+            # Remove cost_savings and try again
+            if "cost_savings" in new_metrics:
+                del new_metrics["cost_savings"]
+            supabase.table(IMPACT_TABLE).insert(new_metrics).execute()
     else:
         current = data[0]
         updated = {
             "routes_simulated": current.get("routes_simulated", 0) + new_routes,
             "total_emissions_saved": current.get("total_emissions_saved", 0) + new_emissions,
             "fuel_savings": current.get("fuel_savings", 0) + new_routes * fuel_saving_per_route,
-            "cost_savings": current.get("cost_savings", 0) + new_routes * cost_saving_per_route,  # Using "cost_savings" consistently
         }
+        # Only update cost_savings if it exists in the current record.
+        if "cost_savings" in current:
+            updated["cost_savings"] = current.get("cost_savings", 0) + new_routes * cost_saving_per_route
+
         record_id = current["id"]
-        supabase.table(IMPACT_TABLE).update(updated).eq("id", record_id).execute()
+        try:
+            supabase.table(IMPACT_TABLE).update(updated).eq("id", record_id).execute()
+        except Exception as e:
+            st.error("Error updating metrics: " + str(e))
     
+    # Clear the cache for get_metrics_from_db so that the next call returns updated data.
     get_metrics_from_db.clear()
 
 # ============================
@@ -141,7 +158,7 @@ def get_route_info(origin_coords, destination_coords):
             distance = route["distance"] / 1609.34  # convert meters to miles
             duration = route["duration"] / 3600.0     # convert seconds to hours
             geometry = route.get("geometry", {}).get("coordinates", [])
-            # Fallback: if geometry is empty, draw a straight line
+            # Fallback: if geometry is empty, use a straight-line path
             if not geometry:
                 geometry = [[start_lon, start_lat], [end_lon, end_lat]]
             return distance, duration, geometry
@@ -340,45 +357,42 @@ elif page == "Route Optimization Simulator":
                     st.write(f"**Estimated Travel Time:** {duration:.2f} hours")
                     st.write(f"**Estimated CO₂ Emissions Saved:** {emissions_estimated:.2f} kg")
                     
-                    # Debug: print geometry to verify format
+                    # Debug: output the geometry
                     st.write("DEBUG: Route geometry:", geometry)
                     
                     # Update persistent metrics in Supabase
                     update_metrics_in_db(new_routes=1, new_emissions=emissions_estimated)
                     
-                    # Fallback: if geometry is empty or invalid, use a straight-line route
-                    if not geometry or len(geometry) < 2:
-                        st.error("Route geometry not available from OSRM. Using fallback straight line.")
-                        geometry = [[origin_coords[1], origin_coords[0]], [destination_coords[1], destination_coords[0]]]
-                    
-                    # Calculate map center from the geometry
-                    lats = [coord[1] for coord in geometry]
-                    lons = [coord[0] for coord in geometry]
-                    avg_lat = sum(lats) / len(lats)
-                    avg_lon = sum(lons) / len(lons)
-                    
-                    # Create a PathLayer to draw the route
-                    route_layer = pdk.Layer(
-                        "PathLayer",
-                        data=[{"path": geometry, "name": "Route"}],
-                        get_path="path",
-                        get_color="[255, 0, 0, 255]",
-                        width_scale=20,
-                        width_min_pixels=2,
-                        get_width=5,
-                    )
-                    view_state = pdk.ViewState(
-                        latitude=avg_lat,
-                        longitude=avg_lon,
-                        zoom=6,
-                        pitch=0,
-                    )
-                    deck = pdk.Deck(
-                        layers=[route_layer],
-                        initial_view_state=view_state,
-                        tooltip={"text": "{name}"}
-                    )
-                    st.pydeck_chart(deck)
+                    if geometry and len(geometry) >= 2:
+                        lats = [coord[1] for coord in geometry]
+                        lons = [coord[0] for coord in geometry]
+                        avg_lat = sum(lats) / len(lats)
+                        avg_lon = sum(lons) / len(lons)
+                        
+                        # Create a PathLayer to draw the route
+                        route_layer = pdk.Layer(
+                            "PathLayer",
+                            data=[{"path": geometry, "name": "Route"}],
+                            get_path="path",
+                            get_color="[255, 0, 0, 255]",
+                            width_scale=20,
+                            width_min_pixels=2,
+                            get_width=5,
+                        )
+                        view_state = pdk.ViewState(
+                            latitude=avg_lat,
+                            longitude=avg_lon,
+                            zoom=6,
+                            pitch=0,
+                        )
+                        deck = pdk.Deck(
+                            layers=[route_layer],
+                            initial_view_state=view_state,
+                            tooltip={"text": "{name}"}
+                        )
+                        st.pydeck_chart(deck)
+                    else:
+                        st.error("Route geometry not available or invalid.")
                     
                     # Link sustainability metrics: fetch updated metrics and display a summary
                     updated_metrics = get_metrics_from_db()
@@ -392,7 +406,6 @@ elif page == "Route Optimization Simulator":
                     st.error("Could not retrieve route information. Please try again later.")
         else:
             st.warning("Please enter both origin and destination.")
-
 
 # ============================
 # Real-Time News Page
