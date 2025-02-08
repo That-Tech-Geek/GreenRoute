@@ -9,19 +9,11 @@ from datetime import datetime
 # ============================
 # API KEYS and CONFIGURATION
 # ============================
-# Place these keys in your .streamlit/secrets.toml file under [api_keys] for production use.
-# Example secrets.toml:
-#
-# [api_keys]
-# news_api_key = "YOUR_NEWS_API_KEY"
-# airtable_api_key = "YOUR_AIRTABLE_API_KEY"
-# airtable_base_id = "YOUR_AIRTABLE_BASE_ID"
-# airtable_table_name = "Feedback"
-#
-NEWS_API_KEY = st.secrets["NEWS-API"]
-AIRTABLE_API_KEY = st.secrets["AIRTABLE-API"]
-AIRTABLE_BASE_ID = st.secrets["AIRTABLE-BASE"]
-AIRTABLE_TABLE_NAME = st.secrets["AIRTABLE-NAME"]
+# Place these keys in your .streamlit/secrets.toml file under [api_keys]
+API_KEYS = st.secrets.get("api_keys", {})
+NEWS_API_KEY = API_KEYS.get("news_api_key", "YOUR_NEWS_API_KEY")
+# Using Sheety as an alternative to Airtable:
+SHEETY_FEEDBACK_URL = API_KEYS.get("sheety_feedback_url", "YOUR_SHEETY_FEEDBACK_URL")
 
 # ============================
 # API Integration Functions
@@ -72,22 +64,20 @@ def get_news_articles(query):
         return articles
     return []
 
-def save_feedback_to_airtable(name, email, feedback):
-    """Save user feedback to Airtable using its REST API."""
-    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_TABLE_NAME}"
+def save_feedback_to_sheet(name, email, feedback):
+    """Save user feedback to a Google Sheet via the Sheety API."""
     headers = {
-        "Authorization": f"Bearer {AIRTABLE_API_KEY}",
         "Content-Type": "application/json"
     }
     data = {
-        "fields": {
+        "feedback": {
             "Name": name,
             "Email": email,
             "Feedback": feedback,
             "Timestamp": datetime.now().isoformat()
         }
     }
-    response = requests.post(url, json=data, headers=headers)
+    response = requests.post(SHEETY_FEEDBACK_URL, json=data, headers=headers)
     return response.status_code in [200, 201]
 
 # ============================
@@ -311,8 +301,8 @@ elif page == "User Feedback":
         submitted = st.form_submit_button("Submit Feedback")
         if submitted:
             if name and email and feedback:
-                # Save feedback to Airtable
-                success = save_feedback_to_airtable(name, email, feedback)
+                # Save feedback using Sheety
+                success = save_feedback_to_sheet(name, email, feedback)
                 if success:
                     st.success("Thank you for your feedback! It has been successfully saved.")
                 else:
