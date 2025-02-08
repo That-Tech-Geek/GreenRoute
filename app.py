@@ -37,25 +37,15 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 def init_db():
     conn = sqlite3.connect("metrics.db", check_same_thread=False)
     c = conn.cursor()
-    # Create the table if it doesn't exist (initially without total_emissions_saved)
     c.execute("""
         CREATE TABLE IF NOT EXISTS sustainability_metrics (
             id INTEGER PRIMARY KEY,
             total_distance REAL,
+            total_emissions_saved REAL,
             fuel_savings REAL
         )
     """)
-    # Check existing columns using PRAGMA
-    c.execute("PRAGMA table_info(sustainability_metrics)")
-    columns = [info[1] for info in c.fetchall()]
-    # If total_emissions_saved is missing, add it
-    if "total_emissions_saved" not in columns:
-        try:
-            c.execute("ALTER TABLE sustainability_metrics ADD COLUMN total_emissions_saved REAL DEFAULT 0.0")
-            conn.commit()
-        except Exception as e:
-            st.error("Error altering table: " + str(e))
-    # Ensure there's at least one row
+    # Check if the table has at least one row; if not, insert initial values.
     c.execute("SELECT * FROM sustainability_metrics LIMIT 1")
     if c.fetchone() is None:
         c.execute("INSERT INTO sustainability_metrics (total_distance, total_emissions_saved, fuel_savings) VALUES (?, ?, ?)",
@@ -96,10 +86,8 @@ def update_metrics_in_db(new_distance: float, new_emissions: float):
     new_total_distance = current_distance + new_distance
     new_total_emissions = current_emissions + new_emissions
     new_fuel_savings = current_fuel + new_distance * fuel_saving_per_km
-    c.execute(
-        "UPDATE sustainability_metrics SET total_distance = ?, total_emissions_saved = ?, fuel_savings = ? WHERE id = 1", 
-        (new_total_distance, new_total_emissions, new_fuel_savings)
-    )
+    c.execute("UPDATE sustainability_metrics SET total_distance = ?, total_emissions_saved = ?, fuel_savings = ? WHERE id = 1", 
+              (new_total_distance, new_total_emissions, new_fuel_savings))
     conn.commit()
     conn.close()
     get_metrics_from_db.clear()  # Clear cache so updated values are returned
@@ -114,22 +102,27 @@ def get_sustainability_metrics():
 def get_cohere_advice(goal: str) -> str:
     """
     Generate actionable sustainability advice using Cohere API based on the user's sustainability goal.
+    If an error occurs (e.g., UnauthorizedError), display an error message and return a default string.
     """
-    co = cohere.Client(COHERE_API_KEY)
-    prompt = f"Provide practical, actionable advice on how to improve sustainability and reduce emissions with a focus on {goal}."
-    response = co.generate(
-         model="command-xlarge-nightly",
-         prompt=prompt,
-         max_tokens=60,
-         temperature=0.7,
-         k=0,
-         p=0.75,
-         frequency_penalty=0,
-         presence_penalty=0,
-         stop_sequences=["--"]
-    )
-    advice = response.generations[0].text.strip()
-    return advice
+    try:
+        co = cohere.Client(COHERE_API_KEY)
+        prompt = f"Provide practical, actionable advice on how to improve sustainability and reduce emissions with a focus on {goal}."
+        response = co.generate(
+             model="command-xlarge-nightly",
+             prompt=prompt,
+             max_tokens=60,
+             temperature=0.7,
+             k=0,
+             p=0.75,
+             frequency_penalty=0,
+             presence_penalty=0,
+             stop_sequences=["--"]
+        )
+        advice = response.generations[0].text.strip()
+        return advice
+    except Exception as e:
+        st.error("Error generating advice. Please check your Cohere API key. " + str(e))
+        return "No advice available at this time."
 
 # ============================
 # API Integration Functions
