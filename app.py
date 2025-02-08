@@ -1,4 +1,10 @@
 import streamlit as st
+st.set_page_config(
+    page_title="GreenRoute - Sustainable Logistics Dashboard",
+    page_icon="🌱",
+    layout="wide",
+)
+
 import pandas as pd
 import numpy as np
 import altair as alt
@@ -6,33 +12,107 @@ import pydeck as pdk
 import requests
 from datetime import datetime
 from supabase import create_client, Client
-import cohere
+import cohere  # Import Cohere for generating advice
 
 # ============================
 # API KEYS and CONFIGURATION
 # ============================
-API_KEYS = st.secrets.get("api_keys", {})
-NEWS_API_KEY = API_KEYS.get("news_api_key", "YOUR_NEWS_API_KEY")
+API_KEYS = st.secrets.get("NEWS-API", {})
+NEWS_API_KEY = API_KEYS.get("NEWS_API", "NEWS_API_KEY")  # using key NEWS_API from the NEWS-API section
+COHERE_API_KEY = API_KEYS.get("COHERE_API_KEY", "COHERE_API_KEY")
 
 SUPABASE_CONFIG = st.secrets.get("supabase", {})
-SUPABASE_URL = SUPABASE_CONFIG.get("url", "YOUR_SUPABASE_PROJECT_URL")
-SUPABASE_ANON_KEY = SUPABASE_CONFIG.get("anon_key", "YOUR_SUPABASE_ANON_KEY")
+SUPABASE_URL = SUPABASE_CONFIG.get("url", "SUPABASE_PROJECT_URL")
+SUPABASE_ANON_KEY = SUPABASE_CONFIG.get("anon_key", "SUPABASE_ANON_KEY")
 SUPABASE_TABLE = SUPABASE_CONFIG.get("table_name", "feedback")
-
-# Cohere API key
-COHERE = st.secrets["COHERE_API_KEY"]
-cohere_client = cohere.Client(COHERE)
+# Table for sustainability metrics will now use the key 'impact_table'
+IMPACT_TABLE = SUPABASE_CONFIG.get("impact_table", "Impact")
 
 # Initialize Supabase Client
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 
 # ============================
+# Persistent Metrics Functions with Caching
+# ============================
+@st.cache_data
+def get_metrics_from_db():
+    """
+    Retrieve the current sustainability metrics from Supabase.
+    This result is cached to avoid repeated database queries within a session.
+    """
+    res = supabase.table(IMPACT_TABLE).select("*").execute()
+    data = res.data
+    if data:
+        return data[0]
+    else:
+        return {
+            "routes_simulated": 0,
+            "total_emissions_saved": 0,
+            "fuel_savings": 0,
+            "cost_savings": 0
+        }
+
+def update_metrics_in_db(new_routes: int, new_emissions: float):
+    """
+    Update the sustainability metrics in Supabase by adding new data.
+    After updating the DB, clear the cache so that subsequent calls fetch the latest data.
+    """
+    fuel_saving_per_route = 50   # e.g., each route saves 50 liters
+    cost_saving_per_route = 100    # e.g., each route saves $100
+    
+    res = supabase.table(IMPACT_TABLE).select("*").execute()
+    data = res.data
+    if not data:
+        new_metrics = {
+            "routes_simulated": new_routes,
+            "total_emissions_saved": new_emissions,
+            "fuel_savings": new_routes * fuel_saving_per_route,
+            "cost_savings": new_routes * cost_saving_per_route   # Using "cost_savings" consistently
+        }
+        supabase.table(IMPACT_TABLE).insert(new_metrics).execute()
+    else:
+        current = data[0]
+        updated = {
+            "routes_simulated": current.get("routes_simulated", 0) + new_routes,
+            "total_emissions_saved": current.get("total_emissions_saved", 0) + new_emissions,
+            "fuel_savings": current.get("fuel_savings", 0) + new_routes * fuel_saving_per_route,
+            "cost_savings": current.get("cost_savings", 0) + new_routes * cost_saving_per_route,  # Using "cost_savings" consistently
+        }
+        record_id = current["id"]
+        supabase.table(IMPACT_TABLE).update(updated).eq("id", record_id).execute()
+    
+    get_metrics_from_db.clear()
+
+# ============================
+# Cohere Advice Function
+# ============================
+def get_cohere_advice(goal: str) -> str:
+    """
+    Generate actionable sustainability advice using Cohere API based on the user's sustainability goal.
+    """
+    co = cohere.Client(COHERE_API_KEY)
+    prompt = f"Provide practical, actionable advice on how to improve sustainability and reduce emissions with a focus on {goal}."
+    response = co.generate(
+         model="command-xlarge-nightly",
+         prompt=prompt,
+         max_tokens=60,
+         temperature=0.7,
+         k=0,
+         p=0.75,
+         frequency_penalty=0,
+         presence_penalty=0,
+         stop_sequences=["--"]
+    )
+    advice = response.generations[0].text.strip()
+    return advice
+
+# ============================
 # API Integration Functions
 # ============================
-
 def get_coordinates(address):
+    """Geocode an address using the free Nominatim API."""
     url = f"https://nominatim.openstreetmap.org/search?q={address}&format=json&limit=1"
-    response = requests.get(url, headers={'User -Agent': 'Mozilla/5.0'})
+    response = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
     if response.status_code == 200:
         data = response.json()
         if data:
@@ -42,6 +122,10 @@ def get_coordinates(address):
     return None, None
 
 def get_route_info(origin_coords, destination_coords):
+    """
+    Retrieve route info using OSRM API.
+    Returns distance (miles), duration (hours), and route geometry as a GeoJSON LineString.
+    """
     start_lon, start_lat = origin_coords[1], origin_coords[0]
     end_lon, end_lat = destination_coords[1], destination_coords[0]
     url = (
@@ -52,20 +136,28 @@ def get_route_info(origin_coords, destination_coords):
     response = requests.get(url)
     if response.status_code == 200:
         data = response.json()
-        if data and 'routes' in data and len(data['routes']) > 0:
-            route = data['routes'][0]
-            distance = route['distance'] / 1609.34  # convert meters to miles
-            duration = route['duration'] / 3600.0   # convert seconds to hours
+        if data and "routes" in data and len(data["routes"]) > 0:
+            route = data["routes"][0]
+            distance = route["distance"] / 1609.34  # convert meters to miles
+            duration = route["duration"] / 3600.0     # convert seconds to hours
             geometry = route.get("geometry", {}).get("coordinates", [])
+            # Fallback: if geometry is empty, draw a straight line
+            if not geometry:
+                geometry = [[start_lon, start_lat], [end_lon, end_lat]]
             return distance, duration, geometry
     return None, None, None
 
 def get_carbon_estimate(distance, vehicle_type='car'):
+    """
+    Estimate CO₂ emissions for a given distance (miles).
+    Example: a typical car emits ~0.411 kg CO₂ per mile.
+    """
     return distance * 0.411
 
 def get_news_articles(query):
+    """Fetch news articles using NewsAPI."""
     if not NEWS_API_KEY or NEWS_API_KEY == "YOUR_NEWS_API_KEY":
-        return []
+        return []  # No API key provided, so no live news
     url = (
         f"https://newsapi.org/v2/everything?q={query}&sortBy=publishedAt"
         f"&apiKey={NEWS_API_KEY}&language=en&pageSize=5"
@@ -78,6 +170,7 @@ def get_news_articles(query):
     return []
 
 def save_feedback_to_supabase(name, email, feedback):
+    """Save user feedback to Supabase."""
     data = {
         "Name": name,
         "Email": email,
@@ -87,27 +180,9 @@ def save_feedback_to_supabase(name, email, feedback):
     response = supabase.table(SUPABASE_TABLE).insert(data).execute()
     return response.data is not None
 
-def generate_recommendations(user_goal):
-    """Generate recommendations using Cohere API."""
-    prompt = f"Based on the sustainability goal of '{user_goal}', provide tailored recommendations for reducing environmental impact in logistics."
-    response = cohere_client.generate(
-        model='command',
-        prompt=prompt,
-        max_tokens=15000,
-        temperature=0.7,
-        stop_sequences=["--"]
-    )
-    return response.generations[0].text.strip()
-
 # ============================
 # Page Configuration & Sidebar
 # ============================
-st.set_page_config(
-    page_title="GreenRoute - Sustainable Logistics Dashboard",
-    page_icon="🌱",
-    layout="wide",
-)
-
 st.sidebar.title("Navigation")
 pages = [
     "Overview", 
@@ -116,18 +191,9 @@ pages = [
     "Sustainability Metrics",
     "Route Optimization Simulator",
     "Real-Time News",
-    "User  Feedback"
+    "User Feedback"
 ]
 page = st.sidebar.radio("Go to", pages)
-
-# Initialize session state for sustainability metrics
-if 'sustainability_metrics' not in st.session_state:
-    st.session_state.sustainability_metrics = {
-        "Total Emissions Reduced (kg)": 0,
-        "Fuel Savings (liters)": 0,
-        "Cost Savings (USD)": 0,
-        "Optimized Routes": 0
-    }
 
 # ============================
 # Overview Page
@@ -155,13 +221,22 @@ elif page == "Personalized Recommendations":
     Enter your sustainability focus (e.g., reducing fuel consumption, minimizing emissions) to get customized recommendations powered by our AI engine.
     """)
     user_goal = st.text_input("Enter your sustainability goal:")
-    if st.button("Get Recommendation"):
-        if user_goal.strip():
-            recommendation = generate_recommendations(user_goal.strip())
-            st.success(f"Based on your goal to **{user_goal.strip()}**, here are some recommendations:")
-            st.write(recommendation)
-        else:
-            st.warning("Please enter a sustainability goal.")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Get Recommendation"):
+            if user_goal.strip():
+                st.success(f"Based on your goal to **{user_goal.strip()}**, explore our tools designed to optimize operations and reduce environmental impact.")
+            else:
+                st.warning("Please enter a sustainability goal.")
+    with col2:
+        if st.button("Get Advice"):
+            if user_goal.strip():
+                advice = get_cohere_advice(user_goal.strip())
+                st.markdown("### Advice:")
+                st.info(advice)
+            else:
+                st.warning("Please enter a sustainability goal.")
 
 # ============================
 # Educational Content Page
@@ -189,21 +264,48 @@ elif page == "Educational Content":
 # ============================
 elif page == "Sustainability Metrics":
     st.title("Sustainability Metrics")
-    st.markdown("### Comprehensive Metrics Dashboard")
-    metrics = st.session_state.sustainability_metrics
-    st.subheader("Key Performance Indicators")
-    st.write(metrics)
-    df_metrics = pd.DataFrame({
-        "Metric": list(metrics.keys()),
-        "Value": list(metrics.values())
+    st.markdown("### Overall Impact of GreenRoute")
+    
+    # Retrieve persistent metrics from Supabase (cached)
+    metrics = get_metrics_from_db()
+    routes_simulated = metrics.get("routes_simulated", 0)
+    total_emissions_saved = metrics.get("total_emissions_saved", 0)
+    fuel_savings = metrics.get("fuel_savings", 0)
+    cost_savings = metrics.get("cost_savings", 0)
+    
+    avg_emissions_saved = total_emissions_saved / routes_simulated if routes_simulated else 0
+
+    st.write(f"**Total Routes Simulated:** {routes_simulated}")
+    st.write(f"**Total CO₂ Emissions Saved:** {total_emissions_saved:.2f} kg")
+    st.write(f"**Average Emissions Saved per Route:** {avg_emissions_saved:.2f} kg")
+    st.write(f"**Estimated Fuel Savings:** {fuel_savings} liters")
+    st.write(f"**Estimated Cost Savings:** ${cost_savings}")
+    
+    # Visual summary using an Altair bar chart
+    metrics_df = pd.DataFrame({
+        "Metric": [
+            "Total Routes",
+            "Total Emissions Saved (kg)",
+            "Avg Emissions per Route (kg)",
+            "Fuel Savings (liters)",
+            "Cost Savings (USD)"
+        ],
+        "Value": [
+            routes_simulated,
+            total_emissions_saved,
+            avg_emissions_saved,
+            fuel_savings,
+            cost_savings
+        ]
     })
-    chart = alt.Chart(df_metrics).mark_bar().encode(
+    chart = alt.Chart(metrics_df).mark_bar().encode(
         x=alt.X("Metric:N", sort=None),
-        y=alt.Y("Value:Q", title="Value"),
+        y=alt.Y("Value:Q"),
         color=alt.Color("Metric:N")
     ).properties(width=700, height=400)
     st.altair_chart(chart, use_container_width=True)
-    st.info("Monitor these metrics to evaluate your sustainability performance.")
+    
+    st.info("GreenRoute has been instrumental in optimizing routes and reducing emissions, leading to significant environmental and economic benefits.")
 
 # ============================
 # Route Optimization Simulator Page
@@ -215,6 +317,7 @@ elif page == "Route Optimization Simulator":
 
     Enter your origin and destination below to calculate the best route. Our system retrieves the full route geometry, estimates travel details, and displays the path interactively.
     """)
+    
     col1, col2 = st.columns(2)
     with col1:
         origin = st.text_input("Enter Origin", "New York, NY")
@@ -231,16 +334,14 @@ elif page == "Route Optimization Simulator":
                 result = get_route_info(origin_coords, destination_coords)
                 if result[0] is not None:
                     distance, duration, geometry = result
-                    emissions = get_carbon_estimate(distance)
-                    
-                    # Update sustainability metrics in session state
-                    st.session_state.sustainability_metrics["Total Emissions Reduced (kg)"] += emissions
-                    st.session_state.sustainability_metrics["Optimized Routes"] += 1
-                    
+                    emissions_estimated = get_carbon_estimate(distance)
                     st.success(f"Optimized route from **{origin}** to **{destination}**:")
                     st.write(f"**Estimated Distance:** {distance:.2f} miles")
                     st.write(f"**Estimated Travel Time:** {duration:.2f} hours")
-                    st.write(f"**Estimated CO₂ Emissions:** {emissions:.2f} kg")
+                    st.write(f"**Estimated CO₂ Emissions Saved:** {emissions_estimated:.2f} kg")
+                    
+                    # Update persistent metrics in Supabase (clearing cache inside update)
+                    update_metrics_in_db(new_routes=1, new_emissions=emissions_estimated)
                     
                     if geometry:
                         lats = [coord[1] for coord in geometry]
@@ -248,6 +349,7 @@ elif page == "Route Optimization Simulator":
                         avg_lat = sum(lats) / len(lats)
                         avg_lon = sum(lons) / len(lons)
                         
+                        # Create a PathLayer to draw the route
                         route_layer = pdk.Layer(
                             "PathLayer",
                             data=[{"path": geometry, "name": "Route"}],
@@ -271,6 +373,15 @@ elif page == "Route Optimization Simulator":
                         st.pydeck_chart(deck)
                     else:
                         st.error("Route geometry not available.")
+                    
+                    # Link sustainability metrics: fetch updated metrics and display a summary
+                    updated_metrics = get_metrics_from_db()
+                    st.markdown("### Updated Sustainability Impact")
+                    st.write(f"**Total Routes Simulated:** {updated_metrics.get('routes_simulated', 0)}")
+                    st.write(f"**Total CO₂ Emissions Saved:** {updated_metrics.get('total_emissions_saved', 0):.2f} kg")
+                    st.write(f"**Estimated Fuel Savings:** {updated_metrics.get('fuel_savings', 0)} liters")
+                    st.write(f"**Estimated Cost Savings:** ${updated_metrics.get('cost_savings', 0)}")
+                    st.info("For a more detailed view, please check the 'Sustainability Metrics' page in the sidebar.")
                 else:
                     st.error("Could not retrieve route information. Please try again later.")
         else:
@@ -300,8 +411,8 @@ elif page == "Real-Time News":
 # ============================
 # User Feedback Page
 # ============================
-elif page == "User  Feedback":
-    st.title("User  Feedback")
+elif page == "User Feedback":
+    st.title("User Feedback")
     st.markdown("""
     **We Value Your Input**
 
