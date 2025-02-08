@@ -337,7 +337,7 @@ elif page == "Route Optimization Simulator":
                     st.markdown("### Updated Sustainability Impact")
                     st.write(f"**Total Kilometers Simulated:** {metrics.get('total_distance', 0.0):.2f} km")
                     st.write(f"**Total CO₂ Emissions Saved:** {metrics.get('total_emissions_saved', 0.0):.2f} kg")
-                    st.write(f"**Estimated Fuel Savings:** {metrics.get($'fuel_savings', 0.0):.2f}")
+                    st.write(f"**Estimated Fuel Savings:** {metrics.get('fuel_savings', 0.0):.2f} Dollars")
                     st.info("For a more detailed view, please check the 'Sustainability Metrics' page in the sidebar.")
                 else:
                     st.error("Could not retrieve route information. Please try again later.")
