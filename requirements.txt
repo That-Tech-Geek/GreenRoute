@@ -6,3 +6,4 @@ pydeck
 altair
 supabase
 cohere
+folium
