@@ -1,4 +1,10 @@
 import streamlit as st
+st.set_page_config(
+    page_title="GreenRoute - Sustainable Logistics Dashboard",
+    page_icon="🌱",
+    layout="wide",
+)
+
 import pandas as pd
 import numpy as np
 import altair as alt
@@ -27,7 +33,7 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 # ============================
 # Persistent Metrics Functions with Caching
 # ============================
-@st.cache(allow_output_mutation=True)
+@st.cache_data
 def get_metrics_from_db():
     """
     Retrieve the current sustainability metrics from Supabase.
@@ -75,7 +81,7 @@ def update_metrics_in_db(new_routes: int, new_emissions: float):
         record_id = current["id"]
         supabase.table(METRICS_TABLE).update(updated).eq("id", record_id).execute()
     
-    # Clear the cache so that get_metrics_from_db returns updated data
+    # Clear the cache for get_metrics_from_db so that next call returns updated data.
     get_metrics_from_db.clear()
 
 # ============================
@@ -148,18 +154,11 @@ def save_feedback_to_supabase(name, email, feedback):
         "Timestamp": datetime.now().isoformat()
     }
     response = supabase.table(SUPABASE_TABLE).insert(data).execute()
-    # Assuming a successful insertion if response.data is present.
     return response.data is not None
 
 # ============================
 # Page Configuration & Sidebar
 # ============================
-st.set_page_config(
-    page_title="GreenRoute - Sustainable Logistics Dashboard",
-    page_icon="🌱",
-    layout="wide",
-)
-
 st.sidebar.title("Navigation")
 pages = [
     "Overview", 
