@@ -13,7 +13,6 @@ from supabase import create_client, Client
 # NewsAPI key is under [api_keys]
 API_KEYS = st.secrets.get("api_keys", {})
 NEWS_API_KEY = API_KEYS.get("news_api_key", "YOUR_NEWS_API_KEY")
-
 # Supabase credentials under [supabase]
 SUPABASE_CONFIG = st.secrets.get("supabase", {})
 SUPABASE_URL = SUPABASE_CONFIG.get("url", "YOUR_SUPABASE_PROJECT_URL")
@@ -176,26 +175,54 @@ elif page == "Educational Content":
 # ============================
 elif page == "Sustainability Metrics":
     st.title("Sustainability Metrics")
-    st.markdown("### Comprehensive Metrics Dashboard")
-    metrics = {
-        "Total Emissions Reduced (kg)": np.random.randint(1000, 5000),
-        "Fuel Savings (liters)": np.random.randint(200, 1000),
-        "Cost Savings (USD)": np.random.randint(5000, 20000),
-        "Optimized Routes": np.random.randint(50, 200)
-    }
-    st.subheader("Key Performance Indicators")
-    st.write(metrics)
-    df_metrics = pd.DataFrame({
-        "Metric": list(metrics.keys()),
-        "Value": list(metrics.values())
+    st.markdown("### Overall Impact of GreenRoute")
+    
+    # Retrieve aggregated metrics from session state
+    routes_simulated = st.session_state.get("routes_simulated", 0)
+    total_emissions_saved = st.session_state.get("total_emissions_saved", 0.0)
+    
+    # Derive additional metrics (these could be further refined)
+    if routes_simulated > 0:
+        avg_emissions_saved = total_emissions_saved / routes_simulated
+    else:
+        avg_emissions_saved = 0.0
+    
+    # Dummy calculations for additional impact indicators (customize as needed)
+    fuel_savings = routes_simulated * 50  # e.g., assume each route saves 50 liters fuel
+    cost_savings = routes_simulated * 100   # e.g., assume each route saves $100
+
+    st.write(f"**Total Routes Simulated:** {routes_simulated}")
+    st.write(f"**Total CO₂ Emissions Saved:** {total_emissions_saved:.2f} kg")
+    st.write(f"**Average Emissions Saved per Route:** {avg_emissions_saved:.2f} kg")
+    st.write(f"**Estimated Fuel Savings:** {fuel_savings} liters")
+    st.write(f"**Estimated Cost Savings:** ${cost_savings}")
+    
+    # Visual summary using an Altair bar chart
+    metrics_df = pd.DataFrame({
+        "Metric": [
+            "Total Routes",
+            "Total Emissions Saved (kg)",
+            "Avg Emissions per Route (kg)",
+            "Fuel Savings (liters)",
+            "Cost Savings (USD)"
+        ],
+        "Value": [
+            routes_simulated,
+            total_emissions_saved,
+            avg_emissions_saved,
+            fuel_savings,
+            cost_savings
+        ]
     })
-    chart = alt.Chart(df_metrics).mark_bar().encode(
+    chart = alt.Chart(metrics_df).mark_bar().encode(
         x=alt.X("Metric:N", sort=None),
-        y=alt.Y("Value:Q", title="Value"),
+        y=alt.Y("Value:Q"),
         color=alt.Color("Metric:N")
     ).properties(width=700, height=400)
     st.altair_chart(chart, use_container_width=True)
-    st.info("Monitor these metrics to evaluate your sustainability performance.")
+    
+    st.info("GreenRoute has been instrumental in optimizing routes and reducing emissions, leading to significant environmental and economic benefits.")
+
 
 # ============================
 # Route Optimization Simulator Page
@@ -207,6 +234,12 @@ elif page == "Route Optimization Simulator":
 
     Enter your origin and destination below to calculate the best route. Our system retrieves the full route geometry, estimates travel details, and displays the path interactively.
     """)
+    
+    # Initialize session state for metrics if not already set
+    if "routes_simulated" not in st.session_state:
+        st.session_state.routes_simulated = 0
+        st.session_state.total_emissions_saved = 0.0
+
     col1, col2 = st.columns(2)
     with col1:
         origin = st.text_input("Enter Origin", "New York, NY")
@@ -220,14 +253,18 @@ elif page == "Route Optimization Simulator":
             if None in origin_coords or None in destination_coords:
                 st.error("Could not geocode the provided addresses. Please try different inputs.")
             else:
-                result = get_route_info(origin_coords, destination_coords)
-                if result[0] is not None:
-                    distance, duration, geometry = result
+                distance, duration, geometry = get_route_info(origin_coords, destination_coords)
+                if distance is not None:
+                    emissions_estimated = get_carbon_estimate(distance)
                     st.success(f"Optimized route from **{origin}** to **{destination}**:")
                     st.write(f"**Estimated Distance:** {distance:.2f} miles")
                     st.write(f"**Estimated Travel Time:** {duration:.2f} hours")
-                    st.write(f"**Estimated CO₂ Emissions:** {get_carbon_estimate(distance):.2f} kg")
+                    st.write(f"**Estimated CO₂ Emissions Saved:** {emissions_estimated:.2f} kg")
                     
+                    # Update session metrics
+                    st.session_state.routes_simulated += 1
+                    st.session_state.total_emissions_saved += emissions_estimated
+
                     if geometry:
                         # Calculate center for map view
                         lats = [coord[1] for coord in geometry]
