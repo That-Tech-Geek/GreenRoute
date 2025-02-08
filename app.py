@@ -19,7 +19,7 @@ from streamlit_folium import folium_static
 # ============================
 # API KEYS and CONFIGURATION
 # ============================
-NEWS_API_KEY = st.secrets["NEWS-API", "NEWS_API"]  # from NEWS-API section
+NEWS_API_KEY = st.secrets["NEWS-API"]["NEWS_API"]
 COHERE_API_KEY = st.secrets["COHERE_API_KEY"]
 
 SUPABASE_CONFIG = st.secrets.get("supabase", {})
@@ -36,6 +36,7 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 def init_db():
     conn = sqlite3.connect("metrics.db", check_same_thread=False)
     c = conn.cursor()
+    # Create table if it doesn't exist
     c.execute("""
         CREATE TABLE IF NOT EXISTS sustainability_metrics (
             id INTEGER PRIMARY KEY,
@@ -101,7 +102,7 @@ def get_sustainability_metrics():
 def get_cohere_advice(goal: str) -> str:
     """
     Generate actionable sustainability advice using Cohere API based on the user's sustainability goal.
-    If an error occurs (e.g., UnauthorizedError), display an error message and return a default string.
+    If an error occurs, display an error message and return a default string.
     """
     try:
         co = cohere.Client(COHERE_API_KEY)
@@ -172,7 +173,7 @@ def get_carbon_estimate(distance, vehicle_type='car'):
 
 def get_news_articles(query):
     """Fetch news articles using NewsAPI."""
-    if not NEWS_API_KEY or NEWS_API_KEY == "NEWS_API_KEY":
+    if not NEWS_API_KEY or NEWS_API_KEY == "YOUR_NEWS_API_KEY":
         return []  # No API key provided
     url = (
         f"https://newsapi.org/v2/everything?q={query}&sortBy=publishedAt"
