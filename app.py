@@ -18,14 +18,69 @@ SUPABASE_CONFIG = st.secrets.get("supabase", {})
 SUPABASE_URL = SUPABASE_CONFIG.get("url", "YOUR_SUPABASE_PROJECT_URL")
 SUPABASE_ANON_KEY = SUPABASE_CONFIG.get("anon_key", "YOUR_SUPABASE_ANON_KEY")
 SUPABASE_TABLE = SUPABASE_CONFIG.get("table_name", "feedback")
+# Table for sustainability metrics
+METRICS_TABLE = "sustainability_metrics"
 
 # Initialize Supabase Client
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 
 # ============================
+# Persistent Metrics Functions with Caching
+# ============================
+@st.cache(allow_output_mutation=True)
+def get_metrics_from_db():
+    """
+    Retrieve the current sustainability metrics from Supabase.
+    This result is cached to avoid repeated database queries within a session.
+    """
+    res = supabase.table(METRICS_TABLE).select("*").execute()
+    data = res.data
+    if data:
+        return data[0]
+    else:
+        return {
+            "routes_simulated": 0,
+            "total_emissions_saved": 0,
+            "fuel_savings": 0,
+            "cost_savings": 0
+        }
+
+def update_metrics_in_db(new_routes: int, new_emissions: float):
+    """
+    Update the sustainability metrics in Supabase by adding new data.
+    After updating the DB, the cache for get_metrics_from_db is cleared so that
+    subsequent calls fetch the latest data.
+    """
+    fuel_saving_per_route = 50   # e.g., each route saves 50 liters
+    cost_saving_per_route = 100    # e.g., each route saves $100
+    
+    res = supabase.table(METRICS_TABLE).select("*").execute()
+    data = res.data
+    if not data:
+        new_metrics = {
+            "routes_simulated": new_routes,
+            "total_emissions_saved": new_emissions,
+            "fuel_savings": new_routes * fuel_saving_per_route,
+            "cost_savings": new_routes * cost_saving_per_route
+        }
+        supabase.table(METRICS_TABLE).insert(new_metrics).execute()
+    else:
+        current = data[0]
+        updated = {
+            "routes_simulated": current.get("routes_simulated", 0) + new_routes,
+            "total_emissions_saved": current.get("total_emissions_saved", 0) + new_emissions,
+            "fuel_savings": current.get("fuel_savings", 0) + new_routes * fuel_saving_per_route,
+            "cost_savings": current.get("cost_savings", 0) + new_routes * cost_saving_per_route,
+        }
+        record_id = current["id"]
+        supabase.table(METRICS_TABLE).update(updated).eq("id", record_id).execute()
+    
+    # Clear the cache so that get_metrics_from_db returns updated data
+    get_metrics_from_db.clear()
+
+# ============================
 # API Integration Functions
 # ============================
-
 def get_coordinates(address):
     """Geocode an address using the free Nominatim API."""
     url = f"https://nominatim.openstreetmap.org/search?q={address}&format=json&limit=1"
@@ -177,19 +232,14 @@ elif page == "Sustainability Metrics":
     st.title("Sustainability Metrics")
     st.markdown("### Overall Impact of GreenRoute")
     
-    # Retrieve aggregated metrics from session state
-    routes_simulated = st.session_state.get("routes_simulated", 0)
-    total_emissions_saved = st.session_state.get("total_emissions_saved", 0.0)
+    # Retrieve persistent metrics from Supabase (cached)
+    metrics = get_metrics_from_db()
+    routes_simulated = metrics.get("routes_simulated", 0)
+    total_emissions_saved = metrics.get("total_emissions_saved", 0)
+    fuel_savings = metrics.get("fuel_savings", 0)
+    cost_savings = metrics.get("cost_savings", 0)
     
-    # Derive additional metrics (these could be further refined)
-    if routes_simulated > 0:
-        avg_emissions_saved = total_emissions_saved / routes_simulated
-    else:
-        avg_emissions_saved = 0.0
-    
-    # Dummy calculations for additional impact indicators (customize as needed)
-    fuel_savings = routes_simulated * 50  # e.g., assume each route saves 50 liters fuel
-    cost_savings = routes_simulated * 100   # e.g., assume each route saves $100
+    avg_emissions_saved = total_emissions_saved / routes_simulated if routes_simulated else 0
 
     st.write(f"**Total Routes Simulated:** {routes_simulated}")
     st.write(f"**Total CO₂ Emissions Saved:** {total_emissions_saved:.2f} kg")
@@ -223,7 +273,6 @@ elif page == "Sustainability Metrics":
     
     st.info("GreenRoute has been instrumental in optimizing routes and reducing emissions, leading to significant environmental and economic benefits.")
 
-
 # ============================
 # Route Optimization Simulator Page
 # ============================
@@ -235,11 +284,6 @@ elif page == "Route Optimization Simulator":
     Enter your origin and destination below to calculate the best route. Our system retrieves the full route geometry, estimates travel details, and displays the path interactively.
     """)
     
-    # Initialize session state for metrics if not already set
-    if "routes_simulated" not in st.session_state:
-        st.session_state.routes_simulated = 0
-        st.session_state.total_emissions_saved = 0.0
-
     col1, col2 = st.columns(2)
     with col1:
         origin = st.text_input("Enter Origin", "New York, NY")
@@ -253,18 +297,18 @@ elif page == "Route Optimization Simulator":
             if None in origin_coords or None in destination_coords:
                 st.error("Could not geocode the provided addresses. Please try different inputs.")
             else:
-                distance, duration, geometry = get_route_info(origin_coords, destination_coords)
-                if distance is not None:
+                result = get_route_info(origin_coords, destination_coords)
+                if result[0] is not None:
+                    distance, duration, geometry = result
                     emissions_estimated = get_carbon_estimate(distance)
                     st.success(f"Optimized route from **{origin}** to **{destination}**:")
                     st.write(f"**Estimated Distance:** {distance:.2f} miles")
                     st.write(f"**Estimated Travel Time:** {duration:.2f} hours")
                     st.write(f"**Estimated CO₂ Emissions Saved:** {emissions_estimated:.2f} kg")
                     
-                    # Update session metrics
-                    st.session_state.routes_simulated += 1
-                    st.session_state.total_emissions_saved += emissions_estimated
-
+                    # Update persistent metrics in Supabase (and clear cache)
+                    update_metrics_in_db(new_routes=1, new_emissions=emissions_estimated)
+                    
                     if geometry:
                         # Calculate center for map view
                         lats = [coord[1] for coord in geometry]
