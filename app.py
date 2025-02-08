@@ -19,13 +19,13 @@ from streamlit_folium import folium_static
 # ============================
 # API KEYS and CONFIGURATION
 # ============================
-NEWS_API_KEY = st.secrets["NEWS_API", "NEWS_API_KEY"]  # from NEWS-API section
+NEWS_API_KEY = st.secrets["NEWS-API", "NEWS_API"]  # from NEWS-API section
 COHERE_API_KEY = st.secrets["COHERE_API_KEY"]
 
 SUPABASE_CONFIG = st.secrets.get("supabase", {})
-SUPABASE_URL = SUPABASE_CONFIG.get("url", "SUPABASE_PROJECT_URL")
-SUPABASE_ANON_KEY = SUPABASE_CONFIG.get("anon_key", "SUPABASE_ANON_KEY")
-SUPABASE_TABLE = SUPABASE_CONFIG.get("table_name", "feedback")
+SUPABASE_URL = SUPABASE_CONFIG.get("url")
+SUPABASE_ANON_KEY = SUPABASE_CONFIG.get("anon_key")
+SUPABASE_TABLE = SUPABASE_CONFIG.get("table_name")
 
 # Initialize Supabase Client (used for feedback)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
