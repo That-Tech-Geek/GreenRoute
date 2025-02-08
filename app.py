@@ -10,61 +10,95 @@ import numpy as np
 import altair as alt
 import folium
 import requests
+import sqlite3
 from datetime import datetime
 from supabase import create_client, Client
 import cohere  # For generating advice
 from streamlit_folium import folium_static
 
 # ============================
+# Initialize SQLite Database for Sustainability Metrics
+# ============================
+def init_db():
+    conn = sqlite3.connect("metrics.db", check_same_thread=False)
+    c = conn.cursor()
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS metrics (
+            id INTEGER PRIMARY KEY,
+            total_distance_simulated REAL,
+            total_emissions_saved REAL,
+            fuel_savings REAL
+        )
+    """)
+    c.execute("SELECT * FROM metrics LIMIT 1")
+    row = c.fetchone()
+    if row is None:
+        c.execute("INSERT INTO metrics (total_distance_simulated, total_emissions_saved, fuel_savings) VALUES (?, ?, ?)", (0.0, 0.0, 0.0))
+        conn.commit()
+    conn.close()
+
+init_db()  # initialize DB on app start
+
+@st.cache_data
+def get_metrics_from_db():
+    """Retrieve sustainability metrics from SQLite and return a dict."""
+    conn = sqlite3.connect("metrics.db", check_same_thread=False)
+    c = conn.cursor()
+    c.execute("SELECT total_distance_simulated, total_emissions_saved, fuel_savings FROM metrics LIMIT 1")
+    row = c.fetchone()
+    conn.close()
+    if row is None:
+        return {"total_distance_simulated": 0.0, "total_emissions_saved": 0.0, "fuel_savings": 0.0}
+    else:
+        return {
+            "total_distance_simulated": row[0],
+            "total_emissions_saved": row[1],
+            "fuel_savings": row[2]
+        }
+
+def update_metrics_in_db(new_distance: float, new_emissions: float):
+    """
+    Update the sustainability metrics in the SQLite DB.
+    new_distance: distance in kilometers
+    new_emissions: emissions saved in kg
+    """
+    fuel_saving_per_km = 2.0  # assumption: each km saves 2 liters of fuel
+    conn = sqlite3.connect("metrics.db", check_same_thread=False)
+    c = conn.cursor()
+    c.execute("SELECT total_distance_simulated, total_emissions_saved, fuel_savings FROM metrics LIMIT 1")
+    row = c.fetchone()
+    if row is None:
+        current_distance, current_emissions, current_fuel = 0.0, 0.0, 0.0
+    else:
+        current_distance, current_emissions, current_fuel = row
+    new_total_distance = current_distance + new_distance
+    new_total_emissions = current_emissions + new_emissions
+    new_fuel_savings = current_fuel + new_distance * fuel_saving_per_km
+    c.execute("UPDATE metrics SET total_distance_simulated = ?, total_emissions_saved = ?, fuel_savings = ? WHERE id = 1", 
+              (new_total_distance, new_total_emissions, new_fuel_savings))
+    conn.commit()
+    conn.close()
+    get_metrics_from_db.clear()  # Clear cache so new values are returned
+
+# ============================
 # API KEYS and CONFIGURATION
 # ============================
 API_KEYS = st.secrets.get("NEWS-API", {})
-NEWS_API_KEY = API_KEYS.get("NEWS_API", "YOUR_NEWS_API_KEY")  # using key NEWS_API from the NEWS-API section
+NEWS_API_KEY = API_KEYS.get("NEWS_API", "YOUR_NEWS_API_KEY")
 COHERE_API_KEY = API_KEYS.get("COHERE_API_KEY", "YOUR_COHERE_API_KEY")
 
 SUPABASE_CONFIG = st.secrets.get("supabase", {})
 SUPABASE_URL = SUPABASE_CONFIG.get("url", "YOUR_SUPABASE_PROJECT_URL")
 SUPABASE_ANON_KEY = SUPABASE_CONFIG.get("anon_key", "YOUR_SUPABASE_ANON_KEY")
 SUPABASE_TABLE = SUPABASE_CONFIG.get("table_name", "feedback")
-# (Sustainability metrics will now be stored in st.session_state)
-
 # Initialize Supabase Client (used for feedback)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
-
-# ============================
-# Initialize Sustainability Metrics in Session State
-# ============================
-if "sustainability_metrics" not in st.session_state:
-    st.session_state.sustainability_metrics = {
-        "routes_simulated": 0,
-        "total_emissions_saved": 0,
-        "fuel_savings": 0
-    }
-
-def update_sustainability_metrics(new_routes: int, new_emissions: float):
-    """
-    Update the sustainability metrics stored in st.session_state.
-    """
-    fuel_saving_per_route = 50  # e.g., each route saves 50 liters
-    metrics = st.session_state.sustainability_metrics
-    metrics["routes_simulated"] += new_routes
-    metrics["total_emissions_saved"] += new_emissions
-    metrics["fuel_savings"] += new_routes * fuel_saving_per_route
-    st.session_state.sustainability_metrics = metrics
-
-def get_sustainability_metrics():
-    """
-    Return the current sustainability metrics from st.session_state.
-    """
-    return st.session_state.sustainability_metrics
 
 # ============================
 # Cohere Advice Function
 # ============================
 def get_cohere_advice(goal: str) -> str:
-    """
-    Generate actionable sustainability advice using Cohere API based on the user's sustainability goal.
-    """
+    """Generate actionable advice using Cohere API based on the user's sustainability goal."""
     co = cohere.Client(COHERE_API_KEY)
     prompt = f"Provide practical, actionable advice on how to improve sustainability and reduce emissions with a focus on {goal}."
     response = co.generate(
@@ -113,10 +147,9 @@ def get_route_info(origin_coords, destination_coords):
         data = response.json()
         if data and "routes" in data and len(data["routes"]) > 0:
             route = data["routes"][0]
-            distance = route["distance"] / 1609.34  # convert meters to miles
-            duration = route["duration"] / 3600.0     # convert seconds to hours
+            distance = route["distance"] / 1609.34  # miles
+            duration = route["duration"] / 3600.0     # hours
             geometry = route.get("geometry", {}).get("coordinates", [])
-            # Fallback: if geometry is empty, use a straight-line path
             if not geometry or len(geometry) < 2:
                 geometry = [[start_lon, start_lat], [end_lon, end_lat]]
             return distance, duration, geometry
@@ -132,7 +165,7 @@ def get_carbon_estimate(distance, vehicle_type='car'):
 def get_news_articles(query):
     """Fetch news articles using NewsAPI."""
     if not NEWS_API_KEY or NEWS_API_KEY == "YOUR_NEWS_API_KEY":
-        return []  # No API key provided, so no live news
+        return []
     url = (
         f"https://newsapi.org/v2/everything?q={query}&sortBy=publishedAt"
         f"&apiKey={NEWS_API_KEY}&language=en&pageSize=5"
@@ -241,29 +274,26 @@ elif page == "Sustainability Metrics":
     st.title("Sustainability Metrics")
     st.markdown("### Overall Impact of GreenRoute")
     
-    # Retrieve metrics from st.session_state
-    metrics = get_sustainability_metrics()
-    routes_simulated = metrics.get("routes_simulated", 0)
-    total_emissions_saved = metrics.get("total_emissions_saved", 0)
-    fuel_savings = metrics.get("fuel_savings", 0)
-    
-    avg_emissions_saved = total_emissions_saved / routes_simulated if routes_simulated else 0
+    metrics = get_metrics_from_db()
+    total_distance = metrics.get("total_distance_simulated", 0.0)
+    total_emissions_saved = metrics.get("total_emissions_saved", 0.0)
+    fuel_savings = metrics.get("fuel_savings", 0.0)
+    avg_emissions_saved = total_emissions_saved / total_distance if total_distance else 0
 
-    st.write(f"**Total Routes Simulated:** {routes_simulated}")
+    st.write(f"**Total Kilometers Simulated:** {total_distance:.2f} km")
     st.write(f"**Total CO₂ Emissions Saved:** {total_emissions_saved:.2f} kg")
-    st.write(f"**Average Emissions Saved per Route:** {avg_emissions_saved:.2f} kg")
-    st.write(f"**Estimated Fuel Savings:** {fuel_savings} liters")
+    st.write(f"**Average Emissions Saved per Kilometer:** {avg_emissions_saved:.2f} kg/km")
+    st.write(f"**Estimated Fuel Savings:** {fuel_savings:.2f} liters")
     
-    # Visual summary using an Altair bar chart
     metrics_df = pd.DataFrame({
         "Metric": [
-            "Total Routes",
+            "Total Kilometers Simulated",
             "Total Emissions Saved (kg)",
-            "Avg Emissions per Route (kg)",
+            "Avg Emissions Saved per km (kg/km)",
             "Fuel Savings (liters)"
         ],
         "Value": [
-            routes_simulated,
+            total_distance,
             total_emissions_saved,
             avg_emissions_saved,
             fuel_savings
@@ -276,7 +306,7 @@ elif page == "Sustainability Metrics":
     ).properties(width=700, height=400)
     st.altair_chart(chart, use_container_width=True)
     
-    st.info("GreenRoute has been instrumental in optimizing routes and reducing emissions, leading to significant environmental and economic benefits.")
+    st.info("GreenRoute has been instrumental in reducing emissions through optimized routing.")
 
 # ============================
 # Route Optimization Simulator Page
@@ -311,37 +341,32 @@ elif page == "Route Optimization Simulator":
                     st.write(f"**Estimated Travel Time:** {duration:.2f} hours")
                     st.write(f"**Estimated CO₂ Emissions Saved:** {emissions_estimated:.2f} kg")
                     
-                    # Update sustainability metrics in session state
-                    update_sustainability_metrics(new_routes=1, new_emissions=emissions_estimated)
+                    # Convert distance from miles to kilometers and update metrics
+                    km_distance = distance * 1.60934
+                    update_sustainability_metrics(new_distance=km_distance, new_emissions=emissions_estimated)
                     
-                    # If geometry is invalid, fallback to a straight-line path
                     if not geometry or len(geometry) < 2:
                         geometry = [[origin_coords[1], origin_coords[0]], [destination_coords[1], destination_coords[0]]]
                     
                     # Convert OSRM geometry ([lon, lat]) to Folium format ([lat, lon])
                     folium_geometry = [[pt[1], pt[0]] for pt in geometry]
                     
-                    # Calculate map center from the route geometry
                     center_lat = sum(pt[0] for pt in folium_geometry) / len(folium_geometry)
                     center_lon = sum(pt[1] for pt in folium_geometry) / len(folium_geometry)
                     
-                    # Create a Folium map centered at the calculated center
                     m = folium.Map(location=[center_lat, center_lon], zoom_start=6)
-                    # Add the route as a polyline
                     folium.PolyLine(locations=folium_geometry, color="red", weight=5).add_to(m)
-                    # Add markers for the origin and destination
                     folium.Marker(location=[origin_coords[0], origin_coords[1]], popup="Origin").add_to(m)
                     folium.Marker(location=[destination_coords[0], destination_coords[1]], popup="Destination").add_to(m)
                     
-                    # Display the Folium map using folium_static
                     folium_static(m, width=700, height=500)
                     
-                    # Optionally, display updated sustainability metrics immediately
-                    metrics = get_sustainability_metrics()
+                    # Display updated sustainability metrics immediately
+                    metrics = get_metrics_from_db()
                     st.markdown("### Updated Sustainability Impact")
-                    st.write(f"**Total Routes Simulated:** {metrics.get('routes_simulated', 0)}")
-                    st.write(f"**Total CO₂ Emissions Saved:** {metrics.get('total_emissions_saved', 0):.2f} kg")
-                    st.write(f"**Estimated Fuel Savings:** {metrics.get('fuel_savings', 0)} liters")
+                    st.write(f"**Total Kilometers Simulated:** {metrics.get('total_distance_simulated', 0.0):.2f} km")
+                    st.write(f"**Total CO₂ Emissions Saved:** {metrics.get('total_emissions_saved', 0.0):.2f} kg")
+                    st.write(f"**Estimated Fuel Savings:** {metrics.get('fuel_savings', 0.0):.2f} liters")
                     st.info("For a more detailed view, please check the 'Sustainability Metrics' page in the sidebar.")
                 else:
                     st.error("Could not retrieve route information. Please try again later.")
