@@ -56,21 +56,26 @@ def update_metrics_in_db(new_routes: int, new_emissions: float):
     """
     Update the sustainability metrics in Supabase by adding new data.
     After updating the DB, clear the cache so that subsequent calls fetch the latest data.
+    Debug information is printed to help verify the update.
     """
-    fuel_saving_per_route = 50   # each route saves 50 liters (adjust if needed)
-    cost_saving_per_route = 100    # each route saves $100 (adjust if needed)
-    
+    fuel_saving_per_route = 50   # e.g., each route saves 50 liters
+    cost_saving_per_route = 100    # e.g., each route saves $100
+
+    # Fetch the current metrics
     res = supabase.table(IMPACT_TABLE).select("*").execute()
     data = res.data
+    st.write("DEBUG: Current Impact table data:", data)  # Debug output
+
     if not data:
         new_metrics = {
             "routes_simulated": new_routes,
             "total_emissions_saved": new_emissions,
             "fuel_savings": new_routes * fuel_saving_per_route,
-            "cost_savings": new_routes * cost_saving_per_route  # Ensure this column exists in your Impact table.
+            "cost_savings": new_routes * cost_saving_per_route
         }
         try:
-            supabase.table(IMPACT_TABLE).insert(new_metrics).execute()
+            response = supabase.table(IMPACT_TABLE).insert(new_metrics).execute()
+            st.write("DEBUG: Insert response:", response.data)  # Debug output
         except Exception as e:
             st.error("Error inserting new metrics: " + str(e))
     else:
@@ -83,11 +88,12 @@ def update_metrics_in_db(new_routes: int, new_emissions: float):
         }
         record_id = current["id"]
         try:
-            supabase.table(IMPACT_TABLE).update(updated).eq("id", record_id).execute()
+            response = supabase.table(IMPACT_TABLE).update(updated).eq("id", record_id).execute()
+            st.write("DEBUG: Update response:", response.data)  # Debug output
         except Exception as e:
             st.error("Error updating metrics: " + str(e))
     
-    # Clear the cache for get_metrics_from_db so that the next call returns updated data.
+    # Clear the cached metrics data so that subsequent calls fetch fresh data
     get_metrics_from_db.clear()
 
 # ============================
