@@ -19,9 +19,8 @@ from streamlit_folium import folium_static
 # ============================
 # API KEYS and CONFIGURATION
 # ============================
-API_KEYS = st.secrets.get("NEWS-API", {})
-NEWS_API_KEY = API_KEYS.get("NEWS_API", "NEWS_API_KEY")  # from NEWS-API section
-COHERE_API_KEY = API_KEYS.get("COHERE_API_KEY", "COHERE_API_KEY")
+NEWS_API_KEY = st.secrets["NEWS_API", "NEWS_API_KEY"]  # from NEWS-API section
+COHERE_API_KEY = st.secrets["COHERE_API_KEY"]
 
 SUPABASE_CONFIG = st.secrets.get("supabase", {})
 SUPABASE_URL = SUPABASE_CONFIG.get("url", "SUPABASE_PROJECT_URL")
