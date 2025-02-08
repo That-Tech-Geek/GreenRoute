@@ -7,6 +7,23 @@ import requests
 from datetime import datetime
 
 # ============================
+# API KEYS and CONFIGURATION
+# ============================
+# Place these keys in your .streamlit/secrets.toml file under [api_keys] for production use.
+# Example secrets.toml:
+#
+# [api_keys]
+# news_api_key = "YOUR_NEWS_API_KEY"
+# airtable_api_key = "YOUR_AIRTABLE_API_KEY"
+# airtable_base_id = "YOUR_AIRTABLE_BASE_ID"
+# airtable_table_name = "Feedback"
+#
+NEWS_API_KEY = st.secrets["NEWS-API"]
+AIRTABLE_API_KEY = st.secrets["AIRTABLE-API"]
+AIRTABLE_BASE_ID = st.secrets["AIRTABLE-BASE"]
+AIRTABLE_TABLE_NAME = st.secrets["AIRTABLE-NAME"]
+
+# ============================
 # API Integration Functions
 # ============================
 
@@ -44,13 +61,10 @@ def get_carbon_estimate(distance, vehicle_type='car'):
     return distance * 0.411
 
 def get_news_articles(query):
-    """Fetch news articles using NewsAPI.
-    API keys are grouped under st.secrets['api_keys']."""
-    api_keys = st.secrets.get("api_keys", {})
-    api_key = api_keys.get("news_api_key", None)
-    if not api_key:
+    """Fetch news articles using NewsAPI."""
+    if not NEWS_API_KEY or NEWS_API_KEY == "YOUR_NEWS_API_KEY":
         return []  # No API key provided, so no live news
-    url = f"https://newsapi.org/v2/everything?q={query}&sortBy=publishedAt&apiKey={api_key}&language=en&pageSize=5"
+    url = f"https://newsapi.org/v2/everything?q={query}&sortBy=publishedAt&apiKey={NEWS_API_KEY}&language=en&pageSize=5"
     response = requests.get(url)
     if response.status_code == 200:
         data = response.json()
@@ -59,17 +73,10 @@ def get_news_articles(query):
     return []
 
 def save_feedback_to_airtable(name, email, feedback):
-    """Save user feedback to Airtable using its REST API.
-    API keys and Airtable details are grouped under st.secrets['api_keys'].
-    """
-    api_keys = st.secrets["api_keys"]
-    api_key = api_keys["airtable_api_key"]
-    base_id = api_keys["airtable_base_id"]
-    table_name = api_keys.get("airtable_table_name", "Feedback")
-    
-    url = f"https://api.airtable.com/v0/{base_id}/{table_name}"
+    """Save user feedback to Airtable using its REST API."""
+    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_TABLE_NAME}"
     headers = {
-        "Authorization": f"Bearer {api_key}",
+        "Authorization": f"Bearer {AIRTABLE_API_KEY}",
         "Content-Type": "application/json"
     }
     data = {
