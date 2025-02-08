@@ -1,0 +1,7 @@
+streamlit
+requests
+numpy
+pandas
+pydeck
+altair
+supabase
