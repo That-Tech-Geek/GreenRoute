@@ -57,8 +57,8 @@ def update_metrics_in_db(new_routes: int, new_emissions: float):
     Update the sustainability metrics in Supabase by adding new data.
     After updating the DB, clear the cache so that subsequent calls fetch the latest data.
     """
-    fuel_saving_per_route = 50   # e.g., each route saves 50 liters
-    cost_saving_per_route = 100    # e.g., each route saves $100
+    fuel_saving_per_route = 50   # each route saves 50 liters (adjust if needed)
+    cost_saving_per_route = 100    # each route saves $100 (adjust if needed)
     
     res = supabase.table(IMPACT_TABLE).select("*").execute()
     data = res.data
@@ -67,14 +67,12 @@ def update_metrics_in_db(new_routes: int, new_emissions: float):
             "routes_simulated": new_routes,
             "total_emissions_saved": new_emissions,
             "fuel_savings": new_routes * fuel_saving_per_route,
-            "cost_savings": new_routes * cost_saving_per_route
+            "cost_savings": new_routes * cost_saving_per_route  # Ensure this column exists in your Impact table.
         }
         try:
-            response = supabase.table(IMPACT_TABLE).insert(new_metrics).execute()
+            supabase.table(IMPACT_TABLE).insert(new_metrics).execute()
         except Exception as e:
             st.error("Error inserting new metrics: " + str(e))
-            # Optionally, print detailed response information:
-            # st.write("Error details:", e.response.json() if hasattr(e, "response") else "No response details available.")
     else:
         current = data[0]
         updated = {
