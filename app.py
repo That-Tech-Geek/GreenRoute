@@ -68,6 +68,15 @@ def init_db():
 # ============================
 # Cohere Advice Function
 # ============================
+
+# Define update_metrics_in_db here (and other functions)
+def update_metrics_in_db(new_distance: float, new_emissions: float):
+    # function body
+    fuel_saving_per_km = 2.0
+    # Update logic...
+    # Clear cache if needed
+    get_metrics_from_db.clear()
+    
 def get_cohere_advice(goal: str) -> str:
     """
     Generate actionable sustainability advice using Cohere API based on the user's sustainability goal.
