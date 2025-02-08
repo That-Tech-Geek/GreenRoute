@@ -53,48 +53,32 @@ def get_metrics_from_db():
         }
 
 def update_metrics_in_db(new_routes: int, new_emissions: float):
-    """
-    Update the sustainability metrics in Supabase by adding new data.
-    After updating the DB, clear the cache so that subsequent calls fetch the latest data.
-    Debug information is printed to help verify the update.
-    """
     fuel_saving_per_route = 50   # e.g., each route saves 50 liters
     cost_saving_per_route = 100    # e.g., each route saves $100
-
-    # Fetch the current metrics
+    
     res = supabase.table(IMPACT_TABLE).select("*").execute()
     data = res.data
-    st.write("DEBUG: Current Impact table data:", data)  # Debug output
-
     if not data:
         new_metrics = {
             "routes_simulated": new_routes,
             "total_emissions_saved": new_emissions,
             "fuel_savings": new_routes * fuel_saving_per_route,
-            "cost_savings": new_routes * cost_saving_per_route
+            "costSaved": new_routes * cost_saving_per_route  # Changed key if needed
         }
-        try:
-            response = supabase.table(IMPACT_TABLE).insert(new_metrics).execute()
-            st.write("DEBUG: Insert response:", response.data)  # Debug output
-        except Exception as e:
-            st.error("Error inserting new metrics: " + str(e))
+        supabase.table(IMPACT_TABLE).insert(new_metrics).execute()
     else:
         current = data[0]
         updated = {
             "routes_simulated": current.get("routes_simulated", 0) + new_routes,
             "total_emissions_saved": current.get("total_emissions_saved", 0) + new_emissions,
             "fuel_savings": current.get("fuel_savings", 0) + new_routes * fuel_saving_per_route,
-            "cost_savings": current.get("cost_savings", 0) + new_routes * cost_saving_per_route,
+            "costSaved": current.get("costSaved", 0) + new_routes * cost_saving_per_route,  # Changed key if needed
         }
         record_id = current["id"]
-        try:
-            response = supabase.table(IMPACT_TABLE).update(updated).eq("id", record_id).execute()
-            st.write("DEBUG: Update response:", response.data)  # Debug output
-        except Exception as e:
-            st.error("Error updating metrics: " + str(e))
+        supabase.table(IMPACT_TABLE).update(updated).eq("id", record_id).execute()
     
-    # Clear the cached metrics data so that subsequent calls fetch fresh data
     get_metrics_from_db.clear()
+
 
 # ============================
 # Cohere Advice Function
