@@ -27,7 +27,6 @@ SUPABASE_CONFIG = st.secrets.get("supabase", {})
 SUPABASE_URL = SUPABASE_CONFIG.get("url", "YOUR_SUPABASE_PROJECT_URL")
 SUPABASE_ANON_KEY = SUPABASE_CONFIG.get("anon_key", "YOUR_SUPABASE_ANON_KEY")
 SUPABASE_TABLE = SUPABASE_CONFIG.get("table_name", "feedback")
-# Sustainability metrics will be stored in a local SQLite DB.
 
 # Initialize Supabase Client (used for feedback)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
@@ -38,25 +37,15 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 def init_db():
     conn = sqlite3.connect("metrics.db", check_same_thread=False)
     c = conn.cursor()
-    # Create the table if it doesn't exist
     c.execute("""
         CREATE TABLE IF NOT EXISTS sustainability_metrics (
             id INTEGER PRIMARY KEY,
             total_distance REAL,
+            total_emissions_saved REAL,
             fuel_savings REAL
         )
     """)
-    # Get current columns in the table
-    c.execute("PRAGMA table_info(sustainability_metrics)")
-    columns = [info[1] for info in c.fetchall()]
-    # If total_emissions_saved is missing, add it
-    if "total_emissions_saved" not in columns:
-        try:
-            c.execute("ALTER TABLE sustainability_metrics ADD COLUMN total_emissions_saved REAL DEFAULT 0.0")
-            conn.commit()
-        except Exception as e:
-            st.error("Error altering table: " + str(e))
-    # Ensure there's at least one row
+    # Ensure one row exists
     c.execute("SELECT * FROM sustainability_metrics LIMIT 1")
     if c.fetchone() is None:
         c.execute("INSERT INTO sustainability_metrics (total_distance, total_emissions_saved, fuel_savings) VALUES (?, ?, ?)",
@@ -64,19 +53,52 @@ def init_db():
         conn.commit()
     conn.close()
 
+init_db()
+
+@st.cache_data
+def get_metrics_from_db():
+    """Retrieve sustainability metrics from SQLite and return as a dict."""
+    conn = sqlite3.connect("metrics.db", check_same_thread=False)
+    c = conn.cursor()
+    c.execute("SELECT total_distance, total_emissions_saved, fuel_savings FROM sustainability_metrics LIMIT 1")
+    row = c.fetchone()
+    conn.close()
+    if row is None:
+        return {"total_distance": 0.0, "total_emissions_saved": 0.0, "fuel_savings": 0.0}
+    return {"total_distance": row[0], "total_emissions_saved": row[1], "fuel_savings": row[2]}
+
+def update_metrics_in_db(new_distance: float, new_emissions: float):
+    """
+    Update the sustainability metrics in the SQLite DB.
+    new_distance: distance in kilometers
+    new_emissions: emissions saved in kg CO₂
+    Assumes a constant fuel savings of 2 liters per km.
+    """
+    fuel_saving_per_km = 2.0  # adjust as needed
+    conn = sqlite3.connect("metrics.db", check_same_thread=False)
+    c = conn.cursor()
+    c.execute("SELECT total_distance, total_emissions_saved, fuel_savings FROM sustainability_metrics LIMIT 1")
+    row = c.fetchone()
+    if row is None:
+        current_distance, current_emissions, current_fuel = 0.0, 0.0, 0.0
+    else:
+        current_distance, current_emissions, current_fuel = row
+    new_total_distance = current_distance + new_distance
+    new_total_emissions = current_emissions + new_emissions
+    new_fuel_savings = current_fuel + new_distance * fuel_saving_per_km
+    c.execute("UPDATE sustainability_metrics SET total_distance = ?, total_emissions_saved = ?, fuel_savings = ? WHERE id = 1", 
+              (new_total_distance, new_total_emissions, new_fuel_savings))
+    conn.commit()
+    conn.close()
+    get_metrics_from_db.clear()  # Clear cache so updated values are returned
+
+def get_sustainability_metrics():
+    """Return the current sustainability metrics from SQLite."""
+    return get_metrics_from_db()
 
 # ============================
 # Cohere Advice Function
 # ============================
-
-# Define update_metrics_in_db here (and other functions)
-def update_metrics_in_db(new_distance: float, new_emissions: float):
-    # function body
-    fuel_saving_per_km = 2.0
-    # Update logic...
-    # Clear cache if needed
-    get_metrics_from_db.clear()
-    
 def get_cohere_advice(goal: str) -> str:
     """
     Generate actionable sustainability advice using Cohere API based on the user's sustainability goal.
