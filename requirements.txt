@@ -7,3 +7,4 @@ altair
 supabase
 cohere
 folium
+streamlit_folium
