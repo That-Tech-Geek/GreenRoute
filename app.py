@@ -346,15 +346,17 @@ elif page == "Route Optimization Simulator":
                     st.write(f"**Estimated Travel Time:** {duration:.2f} hours")
                     st.write(f"**Estimated CO₂ Emissions Saved:** {emissions_estimated:.2f} kg")
                     
-                    # Update persistent metrics in Supabase (and clear cache)
+                    # Update persistent metrics in Supabase (clearing cache inside update)
                     update_metrics_in_db(new_routes=1, new_emissions=emissions_estimated)
                     
                     if geometry:
+                        # Calculate center for map view
                         lats = [coord[1] for coord in geometry]
                         lons = [coord[0] for coord in geometry]
                         avg_lat = sum(lats) / len(lats)
                         avg_lon = sum(lons) / len(lons)
                         
+                        # Create a PathLayer to draw the route
                         route_layer = pdk.Layer(
                             "PathLayer",
                             data=[{"path": geometry, "name": "Route"}],
@@ -378,6 +380,15 @@ elif page == "Route Optimization Simulator":
                         st.pydeck_chart(deck)
                     else:
                         st.error("Route geometry not available.")
+                    
+                    # Link sustainability metrics: fetch updated metrics and display a summary
+                    updated_metrics = get_metrics_from_db()
+                    st.markdown("### Updated Sustainability Impact")
+                    st.write(f"**Total Routes Simulated:** {updated_metrics.get('routes_simulated', 0)}")
+                    st.write(f"**Total CO₂ Emissions Saved:** {updated_metrics.get('total_emissions_saved', 0):.2f} kg")
+                    st.write(f"**Estimated Fuel Savings:** {updated_metrics.get('fuel_savings', 0)} liters")
+                    st.write(f"**Estimated Cost Savings:** ${updated_metrics.get('cost_savings', 0)}")
+                    st.info("For a more detailed view, please check the 'Sustainability Metrics' page in the sidebar.")
                 else:
                     st.error("Could not retrieve route information. Please try again later.")
         else:
