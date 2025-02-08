@@ -12,20 +12,21 @@ import pydeck as pdk
 import requests
 from datetime import datetime
 from supabase import create_client, Client
+import cohere  # Import Cohere for generating advice
 
 # ============================
 # API KEYS and CONFIGURATION
 # ============================
-# NewsAPI key is under [api_keys]
-API_KEYS = st.secrets.get("api_keys", {})
-NEWS_API_KEY = API_KEYS.get("news_api_key", "YOUR_NEWS_API_KEY")
-# Supabase credentials under [supabase]
+API_KEYS = st.secrets.get("NEWS-API", {})
+NEWS_API_KEY = API_KEYS.get("NEWS_API", "YOUR_NEWS_API_KEY")  # Note: using key NEWS_API from the NEWS-API section
+COHERE_API_KEY = API_KEYS.get("COHERE_API_KEY", "YOUR_COHERE_API_KEY")
+
 SUPABASE_CONFIG = st.secrets.get("supabase", {})
 SUPABASE_URL = SUPABASE_CONFIG.get("url", "YOUR_SUPABASE_PROJECT_URL")
 SUPABASE_ANON_KEY = SUPABASE_CONFIG.get("anon_key", "YOUR_SUPABASE_ANON_KEY")
 SUPABASE_TABLE = SUPABASE_CONFIG.get("table_name", "feedback")
-# Table for sustainability metrics
-METRICS_TABLE = "sustainability_metrics"
+# Table for sustainability metrics will now use the key 'impact_table'
+IMPACT_TABLE = st.secrets.get("supabase", {}).get("impact_table", "Impact")
 
 # Initialize Supabase Client
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
@@ -39,7 +40,7 @@ def get_metrics_from_db():
     Retrieve the current sustainability metrics from Supabase.
     This result is cached to avoid repeated database queries within a session.
     """
-    res = supabase.table(METRICS_TABLE).select("*").execute()
+    res = supabase.table(IMPACT_TABLE).select("*").execute()
     data = res.data
     if data:
         return data[0]
@@ -54,13 +55,12 @@ def get_metrics_from_db():
 def update_metrics_in_db(new_routes: int, new_emissions: float):
     """
     Update the sustainability metrics in Supabase by adding new data.
-    After updating the DB, the cache for get_metrics_from_db is cleared so that
-    subsequent calls fetch the latest data.
+    After updating the DB, clear the cache so that subsequent calls fetch the latest data.
     """
     fuel_saving_per_route = 50   # e.g., each route saves 50 liters
     cost_saving_per_route = 100    # e.g., each route saves $100
     
-    res = supabase.table(METRICS_TABLE).select("*").execute()
+    res = supabase.table(IMPACT_TABLE).select("*").execute()
     data = res.data
     if not data:
         new_metrics = {
@@ -69,7 +69,7 @@ def update_metrics_in_db(new_routes: int, new_emissions: float):
             "fuel_savings": new_routes * fuel_saving_per_route,
             "cost_savings": new_routes * cost_saving_per_route
         }
-        supabase.table(METRICS_TABLE).insert(new_metrics).execute()
+        supabase.table(IMPACT_TABLE).insert(new_metrics).execute()
     else:
         current = data[0]
         updated = {
@@ -79,10 +79,33 @@ def update_metrics_in_db(new_routes: int, new_emissions: float):
             "cost_savings": current.get("cost_savings", 0) + new_routes * cost_saving_per_route,
         }
         record_id = current["id"]
-        supabase.table(METRICS_TABLE).update(updated).eq("id", record_id).execute()
+        supabase.table(IMPACT_TABLE).update(updated).eq("id", record_id).execute()
     
-    # Clear the cache for get_metrics_from_db so that next call returns updated data.
+    # Clear the cache so that next call returns updated data.
     get_metrics_from_db.clear()
+
+# ============================
+# Cohere Advice Function
+# ============================
+def get_cohere_advice(goal: str) -> str:
+    """
+    Generate actionable sustainability advice using Cohere API based on the user's sustainability goal.
+    """
+    co = cohere.Client(COHERE_API_KEY)
+    prompt = f"Provide practical, actionable advice on how to improve sustainability and reduce emissions with a focus on {goal}."
+    response = co.generate(
+         model="command-xlarge-nightly",
+         prompt=prompt,
+         max_tokens=60,
+         temperature=0.7,
+         k=0,
+         p=0.75,
+         frequency_penalty=0,
+         presence_penalty=0,
+         stop_sequences=["--"]
+    )
+    advice = response.generations[0].text.strip()
+    return advice
 
 # ============================
 # API Integration Functions
@@ -104,7 +127,6 @@ def get_route_info(origin_coords, destination_coords):
     Retrieve route info using OSRM API.
     Returns distance (miles), duration (hours), and route geometry as a GeoJSON LineString.
     """
-    # OSRM expects coordinates in lon,lat order.
     start_lon, start_lat = origin_coords[1], origin_coords[0]
     end_lon, end_lat = destination_coords[1], destination_coords[0]
     url = (
@@ -117,8 +139,8 @@ def get_route_info(origin_coords, destination_coords):
         data = response.json()
         if data and 'routes' in data and len(data['routes']) > 0:
             route = data['routes'][0]
-            distance = route['distance'] / 1609.34  # convert meters to miles
-            duration = route['duration'] / 3600.0   # convert seconds to hours
+            distance = route['distance'] / 1609.34  # meters to miles
+            duration = route['duration'] / 3600.0     # seconds to hours
             geometry = route.get("geometry", {}).get("coordinates", [])
             return distance, duration, geometry
     return None, None, None
@@ -197,11 +219,22 @@ elif page == "Personalized Recommendations":
     Enter your sustainability focus (e.g., reducing fuel consumption, minimizing emissions) to get customized recommendations powered by our AI engine.
     """)
     user_goal = st.text_input("Enter your sustainability goal:")
-    if st.button("Get Recommendation"):
-        if user_goal.strip():
-            st.success(f"Based on your goal to **{user_goal.strip()}**, explore our tools designed to optimize operations and reduce environmental impact.")
-        else:
-            st.warning("Please enter a sustainability goal.")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Get Recommendation"):
+            if user_goal.strip():
+                st.success(f"Based on your goal to **{user_goal.strip()}**, explore our tools designed to optimize operations and reduce environmental impact.")
+            else:
+                st.warning("Please enter a sustainability goal.")
+    with col2:
+        if st.button("Get Advice"):
+            if user_goal.strip():
+                advice = get_cohere_advice(user_goal.strip())
+                st.markdown("### Advice:")
+                st.info(advice)
+            else:
+                st.warning("Please enter a sustainability goal.")
 
 # ============================
 # Educational Content Page
@@ -309,13 +342,11 @@ elif page == "Route Optimization Simulator":
                     update_metrics_in_db(new_routes=1, new_emissions=emissions_estimated)
                     
                     if geometry:
-                        # Calculate center for map view
                         lats = [coord[1] for coord in geometry]
                         lons = [coord[0] for coord in geometry]
                         avg_lat = sum(lats) / len(lats)
                         avg_lon = sum(lons) / len(lons)
                         
-                        # Create a PathLayer to draw the route
                         route_layer = pdk.Layer(
                             "PathLayer",
                             data=[{"path": geometry, "name": "Route"}],
