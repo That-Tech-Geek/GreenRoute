@@ -110,7 +110,7 @@ def get_cohere_advice(goal: str) -> str:
         response = co.generate(
              model="command-xlarge-nightly",
              prompt=prompt,
-             max_tokens=60,
+             max_tokens=6000,
              temperature=0.7,
              k=0,
              p=0.75,
