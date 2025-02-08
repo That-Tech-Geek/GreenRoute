@@ -27,7 +27,7 @@ SUPABASE_CONFIG = st.secrets.get("supabase", {})
 SUPABASE_URL = SUPABASE_CONFIG.get("url", "YOUR_SUPABASE_PROJECT_URL")
 SUPABASE_ANON_KEY = SUPABASE_CONFIG.get("anon_key", "YOUR_SUPABASE_ANON_KEY")
 SUPABASE_TABLE = SUPABASE_CONFIG.get("table_name", "feedback")
-# Sustainability metrics will be stored in a local SQLite DB.
+# (Sustainability metrics will now be stored in a local SQLite DB)
 
 # Initialize Supabase Client (used for feedback)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
@@ -72,7 +72,7 @@ def update_metrics_in_db(new_distance: float, new_emissions: float):
     Update the sustainability metrics in the SQLite DB.
     new_distance: distance in kilometers
     new_emissions: emissions saved in kg CO₂
-    Assumes a constant fuel savings (e.g., 2 liters saved per km).
+    Assumes a constant fuel savings of 2 liters per km.
     """
     fuel_saving_per_km = 2.0  # adjust as needed
     conn = sqlite3.connect("metrics.db", check_same_thread=False)
@@ -86,11 +86,11 @@ def update_metrics_in_db(new_distance: float, new_emissions: float):
     new_total_distance = current_distance + new_distance
     new_total_emissions = current_emissions + new_emissions
     new_fuel_savings = current_fuel + new_distance * fuel_saving_per_km
-    c.execute("UPDATE sustainability_metrics SET total_distance = ?, total_emissions = ?, fuel_savings = ? WHERE id = 1", 
+    c.execute("UPDATE sustainability_metrics SET total_distance = ?, total_emissions = ?, fuel_savings = ? WHERE id = 1",
               (new_total_distance, new_total_emissions, new_fuel_savings))
     conn.commit()
     conn.close()
-    get_metrics_from_db.clear()  # Clear cache so updated values are returned
+    get_metrics_from_db.clear()  # Clear cache to return updated values
 
 def get_sustainability_metrics():
     """Return the current sustainability metrics from SQLite."""
@@ -137,7 +137,7 @@ def get_coordinates(address):
 def get_route_info(origin_coords, destination_coords):
     """
     Retrieve route info using OSRM API.
-    Returns distance (miles), duration (hours), and route geometry as a GeoJSON LineString.
+    Returns distance (in miles), duration (in hours), and route geometry as a GeoJSON LineString.
     """
     start_lon, start_lat = origin_coords[1], origin_coords[0]
     end_lon, end_lat = destination_coords[1], destination_coords[0]
@@ -161,7 +161,7 @@ def get_route_info(origin_coords, destination_coords):
 
 def get_carbon_estimate(distance, vehicle_type='car'):
     """
-    Estimate CO₂ emissions for a given distance (miles).
+    Estimate CO₂ emissions for a given distance (in miles).
     Example: a typical car emits ~0.411 kg CO₂ per mile.
     """
     return distance * 0.411
