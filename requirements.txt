@@ -5,3 +5,4 @@ pandas
 pydeck
 altair
 supabase
+cohere
