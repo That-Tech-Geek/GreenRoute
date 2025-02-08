@@ -326,11 +326,13 @@ elif page == "Route Optimization Simulator":
     
     if st.button("Simulate Route"):
         if origin and destination:
-            origin_coords = get_coordinates(origin)  # Returns (lat, lon)
-            destination_coords = get_coordinates(destination)  # Returns (lat, lon)
+            # Retrieve coordinates using Nominatim API (returns (lat, lon))
+            origin_coords = get_coordinates(origin)
+            destination_coords = get_coordinates(destination)
             if None in origin_coords or None in destination_coords:
                 st.error("Could not geocode the provided addresses. Please try different inputs.")
             else:
+                # Retrieve route information from OSRM API
                 result = get_route_info(origin_coords, destination_coords)
                 if result[0] is not None:
                     distance, duration, geometry = result
@@ -340,40 +342,37 @@ elif page == "Route Optimization Simulator":
                     st.write(f"**Estimated Travel Time:** {duration:.2f} hours")
                     st.write(f"**Estimated CO₂ Emissions Saved:** {emissions_estimated:.2f} kg")
                     
-                    # If geometry is not valid, use a fallback straight-line route.
+                    # If OSRM does not return valid geometry, use a straight-line fallback
                     if not geometry or len(geometry) < 2:
+                        # OSRM returns [lon, lat] order; fallback with a straight line
                         geometry = [[origin_coords[1], origin_coords[0]], [destination_coords[1], destination_coords[0]]]
                     
-                    # Convert OSRM geometry ([lon, lat]) to Folium format ([lat, lon])
+                    # Convert geometry from [lon, lat] to [lat, lon] for Folium
                     folium_geometry = [[pt[1], pt[0]] for pt in geometry]
                     
-                    # Calculate map center from the route geometry
+                    # Calculate the map center based on the converted geometry
                     center_lat = sum(pt[0] for pt in folium_geometry) / len(folium_geometry)
                     center_lon = sum(pt[1] for pt in folium_geometry) / len(folium_geometry)
                     
-                    # Create a Folium map centered at the calculated center
+                    # Create a Folium map centered at the calculated coordinates
                     m = folium.Map(location=[center_lat, center_lon], zoom_start=6)
                     
-                    # Add the route as a polyline
+                    # Add the route as a polyline to the map
                     folium.PolyLine(locations=folium_geometry, color="red", weight=5).add_to(m)
                     
-                    # Add markers for origin and destination
+                    # Add markers for the origin and destination
                     folium.Marker(location=[origin_coords[0], origin_coords[1]], popup="Origin").add_to(m)
                     folium.Marker(location=[destination_coords[0], destination_coords[1]], popup="Destination").add_to(m)
                     
-                    # Use a placeholder to render the map so it stays on the page
-                    map_placeholder = st.empty()
-                    map_placeholder.markdown("### Route Map")
+                    # Render the Folium map using st_folium with a fixed key to help preserve state
                     from streamlit_folium import st_folium
-                    map_data = st_folium(m, width=700, height=500)
+                    st_folium(m, width=700, height=500, key="map")
                     
-                    # (Optionally, you can include additional content below the map.)
-                    st.info("The map above shows the optimized route along with the origin and destination markers.")
+                    st.info("The map above shows the optimized route along with markers for the origin and destination.")
                 else:
                     st.error("Could not retrieve route information. Please try again later.")
         else:
             st.warning("Please enter both origin and destination.")
-
 
 # ============================
 # Real-Time News Page
