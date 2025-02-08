@@ -315,7 +315,7 @@ elif page == "Route Optimization Simulator":
     st.markdown("""
     **Simulate Your Route and Visualize the Optimal Path**
 
-    Enter your origin and destination below to calculate the best route. Our system retrieves the full route geometry, estimates travel details, and displays the path interactively.
+    Enter your origin and destination below to calculate the best route. Our system retrieves the route geometry via the OSRM API and displays it on an interactive map.
     """)
     
     col1, col2 = st.columns(2)
@@ -326,11 +326,13 @@ elif page == "Route Optimization Simulator":
     
     if st.button("Simulate Route"):
         if origin and destination:
-            origin_coords = get_coordinates(origin)  # Returns (lat, lon)
-            destination_coords = get_coordinates(destination)  # Returns (lat, lon)
+            # Get coordinates from Nominatim API (returns (lat, lon))
+            origin_coords = get_coordinates(origin)
+            destination_coords = get_coordinates(destination)
             if None in origin_coords or None in destination_coords:
                 st.error("Could not geocode the provided addresses. Please try different inputs.")
             else:
+                # Get route information from OSRM API
                 result = get_route_info(origin_coords, destination_coords)
                 if result[0] is not None:
                     distance, duration, geometry = result
@@ -340,42 +342,36 @@ elif page == "Route Optimization Simulator":
                     st.write(f"**Estimated Travel Time:** {duration:.2f} hours")
                     st.write(f"**Estimated CO₂ Emissions Saved:** {emissions_estimated:.2f} kg")
                     
-                    # Update persistent metrics via Sheety
-                    update_metrics_in_sheety(new_routes=1, new_emissions=emissions_estimated)
-                    
-                    # If geometry is not valid, use a straight-line path
+                    # If geometry is not valid, fallback to a straight-line route
                     if not geometry or len(geometry) < 2:
+                        # OSRM returns coordinates in [lon, lat] order.
                         geometry = [[origin_coords[1], origin_coords[0]], [destination_coords[1], destination_coords[0]]]
                     
-                    # Convert OSRM geometry (lon, lat) to (lat, lon) for Folium
-                    converted_geometry = [[coord[1], coord[0]] for coord in geometry]
+                    # Convert OSRM geometry ([lon, lat]) to Folium format ([lat, lon])
+                    folium_geometry = [[coord[1], coord[0]] for coord in geometry]
                     
                     # Calculate map center from the route geometry
-                    center_lat = sum([pt[0] for pt in converted_geometry]) / len(converted_geometry)
-                    center_lon = sum([pt[1] for pt in converted_geometry]) / len(converted_geometry)
+                    center_lat = sum(pt[0] for pt in folium_geometry) / len(folium_geometry)
+                    center_lon = sum(pt[1] for pt in folium_geometry) / len(folium_geometry)
                     
-                    # Create a Folium map centered at the calculated center
+                    # Create a Folium map centered on the route
                     m = folium.Map(location=[center_lat, center_lon], zoom_start=6)
-                    # Add the route as a polyline
-                    folium.PolyLine(locations=converted_geometry, color="red", weight=5).add_to(m)
-                    # Add markers for origin and destination
+                    
+                    # Add the route polyline to the map
+                    folium.PolyLine(locations=folium_geometry, color="red", weight=5).add_to(m)
+                    
+                    # Add markers for the origin and destination
                     folium.Marker(location=[origin_coords[0], origin_coords[1]], popup="Origin").add_to(m)
                     folium.Marker(location=[destination_coords[0], destination_coords[1]], popup="Destination").add_to(m)
                     
                     # Display the Folium map in Streamlit
+                    from streamlit_folium import st_folium
                     st_folium(m, width=700, height=500)
-                    
-                    # Link sustainability metrics: fetch updated metrics and display a summary
-                    updated_metrics = get_metrics_from_sheety()
-                    st.markdown("### Updated Sustainability Impact")
-                    st.write(f"**Total Routes Simulated:** {updated_metrics.get('routes_simulated', 0)}")
-                    st.write(f"**Total CO₂ Emissions Saved:** {updated_metrics.get('total_emissions_saved', 0):.2f} kg")
-                    st.write(f"**Estimated Fuel Savings:** {updated_metrics.get('fuel_savings', 0)} liters")
-                    st.info("For a more detailed view, please check the 'Sustainability Metrics' page in the sidebar.")
                 else:
                     st.error("Could not retrieve route information. Please try again later.")
         else:
             st.warning("Please enter both origin and destination.")
+
 
 # ============================
 # Real-Time News Page
