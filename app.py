@@ -20,8 +20,8 @@ SUPABASE_ANON_KEY = SUPABASE_CONFIG.get("anon_key", "YOUR_SUPABASE_ANON_KEY")
 SUPABASE_TABLE = SUPABASE_CONFIG.get("table_name", "feedback")
 
 # Cohere API key
-COHERE_API_KEY = st.secrets["COHERE_API_KEY"]
-cohere_client = cohere.Client(COHERE_API_KEY)
+COHERE = st.secrets["COHERE_API_KEY"]
+cohere_client = cohere.Client(COHERE)
 
 # Initialize Supabase Client
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
