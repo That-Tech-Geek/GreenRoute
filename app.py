@@ -26,7 +26,7 @@ SUPABASE_CONFIG = st.secrets.get("supabase", {})
 SUPABASE_URL = SUPABASE_CONFIG.get("url", "YOUR_SUPABASE_PROJECT_URL")
 SUPABASE_ANON_KEY = SUPABASE_CONFIG.get("anon_key", "YOUR_SUPABASE_ANON_KEY")
 SUPABASE_TABLE = SUPABASE_CONFIG.get("table_name", "feedback")
-# (Sustainability metrics will now be stored in a local cache; see below)
+# (Sustainability metrics will now be stored in st.session_state)
 
 # Initialize Supabase Client (used for feedback)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
@@ -36,7 +36,7 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 # ============================
 if "sustainability_metrics" not in st.session_state:
     st.session_state.sustainability_metrics = {
-        "total_distance": 0.0,          # in kilometers
+        "total_distance": 0.0,          # Total kilometers simulated
         "total_emissions_saved": 0.0,   # in kg CO₂
         "fuel_savings": 0.0             # in liters
     }
@@ -46,9 +46,8 @@ def update_sustainability_metrics(new_distance: float, new_emissions: float):
     Update the sustainability metrics stored in st.session_state.
     new_distance: distance in kilometers
     new_emissions: emissions saved in kg CO₂
-    Uses a constant fuel savings per kilometer (e.g., 2 liters per km).
     """
-    fuel_saving_per_km = 2.0  # adjust as needed
+    fuel_saving_per_km = 2.0  # adjust as needed (e.g., 2 liters saved per km)
     metrics = st.session_state.sustainability_metrics
     metrics["total_distance"] += new_distance
     metrics["total_emissions_saved"] += new_emissions
@@ -102,7 +101,7 @@ def get_coordinates(address):
 def get_route_info(origin_coords, destination_coords):
     """
     Retrieve route info using OSRM API.
-    Returns distance (in miles), duration (in hours), and route geometry as a GeoJSON LineString.
+    Returns distance (miles), duration (hours), and route geometry as a GeoJSON LineString.
     """
     start_lon, start_lat = origin_coords[1], origin_coords[0]
     end_lon, end_lat = destination_coords[1], destination_coords[0]
@@ -116,17 +115,17 @@ def get_route_info(origin_coords, destination_coords):
         data = response.json()
         if data and "routes" in data and len(data["routes"]) > 0:
             route = data["routes"][0]
-            distance = route["distance"] / 1609.34  # Convert meters to miles
-            duration = route["duration"] / 3600.0     # Convert seconds to hours
+            distance = route["distance"] / 1609.34  # convert meters to miles
+            duration = route["duration"] / 3600.0     # convert seconds to hours
             geometry = route.get("geometry", {}).get("coordinates", [])
             if not geometry or len(geometry) < 2:
-                geometry = [[start_lon, start_lat], [end_lon, end_lat]]
+                geometry = [[origin_coords[1], origin_coords[0]], [destination_coords[1], destination_coords[0]]]
             return distance, duration, geometry
     return None, None, None
 
 def get_carbon_estimate(distance, vehicle_type='car'):
     """
-    Estimate CO₂ emissions for a given distance (in miles).
+    Estimate CO₂ emissions for a given distance (miles).
     Example: a typical car emits ~0.411 kg CO₂ per mile.
     """
     return distance * 0.411
@@ -134,7 +133,7 @@ def get_carbon_estimate(distance, vehicle_type='car'):
 def get_news_articles(query):
     """Fetch news articles using NewsAPI."""
     if not NEWS_API_KEY or NEWS_API_KEY == "YOUR_NEWS_API_KEY":
-        return []  # No API key provided
+        return []  # No API key provided, so no live news
     url = (
         f"https://newsapi.org/v2/everything?q={query}&sortBy=publishedAt"
         f"&apiKey={NEWS_API_KEY}&language=en&pageSize=5"
@@ -311,7 +310,7 @@ elif page == "Route Optimization Simulator":
                     st.write(f"**Estimated Travel Time:** {duration:.2f} hours")
                     st.write(f"**Estimated CO₂ Emissions Saved:** {emissions_estimated:.2f} kg")
                     
-                    # Convert distance from miles to kilometers
+                    # Convert distance from miles to kilometers and update metrics
                     km_distance = distance * 1.60934
                     update_sustainability_metrics(new_distance=km_distance, new_emissions=emissions_estimated)
                     
