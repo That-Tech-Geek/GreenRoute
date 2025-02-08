@@ -45,8 +45,9 @@ def get_carbon_estimate(distance, vehicle_type='car'):
 
 def get_news_articles(query):
     """Fetch news articles using NewsAPI.
-    Make sure to add your NewsAPI key in Streamlit's secrets under 'news_api_key'."""
-    api_key = st.secrets.get("news_api_key", None)
+    API keys are grouped under st.secrets['api_keys']."""
+    api_keys = st.secrets.get("api_keys", {})
+    api_key = api_keys.get("news_api_key", None)
     if not api_key:
         return []  # No API key provided, so no live news
     url = f"https://newsapi.org/v2/everything?q={query}&sortBy=publishedAt&apiKey={api_key}&language=en&pageSize=5"
@@ -59,14 +60,12 @@ def get_news_articles(query):
 
 def save_feedback_to_airtable(name, email, feedback):
     """Save user feedback to Airtable using its REST API.
-    Requires the following keys in st.secrets:
-      - airtable_api_key
-      - airtable_base_id
-      - airtable_table_name (optional, defaults to 'Feedback')
+    API keys and Airtable details are grouped under st.secrets['api_keys'].
     """
-    api_key = st.secrets["airtable"]["airtable_api_key"]
-    base_id = st.secrets["airtable"]["airtable_base_id"]
-    table_name = st.secrets["airtable"].get("airtable_table_name", "Feedback")
+    api_keys = st.secrets["api_keys"]
+    api_key = api_keys["airtable_api_key"]
+    base_id = api_keys["airtable_base_id"]
+    table_name = api_keys.get("airtable_table_name", "Feedback")
     
     url = f"https://api.airtable.com/v0/{base_id}/{table_name}"
     headers = {
