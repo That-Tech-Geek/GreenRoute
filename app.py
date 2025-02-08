@@ -69,7 +69,12 @@ def update_metrics_in_db(new_routes: int, new_emissions: float):
             "fuel_savings": new_routes * fuel_saving_per_route,
             "cost_savings": new_routes * cost_saving_per_route
         }
-        supabase.table(IMPACT_TABLE).insert(new_metrics).execute()
+        try:
+            response = supabase.table(IMPACT_TABLE).insert(new_metrics).execute()
+        except Exception as e:
+            st.error("Error inserting new metrics: " + str(e))
+            # Optionally, print detailed response information:
+            # st.write("Error details:", e.response.json() if hasattr(e, "response") else "No response details available.")
     else:
         current = data[0]
         updated = {
@@ -79,9 +84,12 @@ def update_metrics_in_db(new_routes: int, new_emissions: float):
             "cost_savings": current.get("cost_savings", 0) + new_routes * cost_saving_per_route,
         }
         record_id = current["id"]
-        supabase.table(IMPACT_TABLE).update(updated).eq("id", record_id).execute()
+        try:
+            supabase.table(IMPACT_TABLE).update(updated).eq("id", record_id).execute()
+        except Exception as e:
+            st.error("Error updating metrics: " + str(e))
     
-    # Clear the cache so that next call returns updated data.
+    # Clear the cache for get_metrics_from_db so that the next call returns updated data.
     get_metrics_from_db.clear()
 
 # ============================
