@@ -340,10 +340,14 @@ elif page == "Route Optimization Simulator":
                     st.write(f"**Estimated Travel Time:** {duration:.2f} hours")
                     st.write(f"**Estimated CO₂ Emissions Saved:** {emissions_estimated:.2f} kg")
                     
+                    # Debug output: Print geometry to verify its content
+                    st.write("DEBUG: Route geometry:", geometry)
+                    
                     # Update persistent metrics in Supabase (clearing cache inside update)
                     update_metrics_in_db(new_routes=1, new_emissions=emissions_estimated)
                     
-                    if geometry:
+                    if geometry and len(geometry) >= 2:
+                        # Calculate center for map view using the geometry
                         lats = [coord[1] for coord in geometry]
                         lons = [coord[0] for coord in geometry]
                         avg_lat = sum(lats) / len(lats)
@@ -372,7 +376,7 @@ elif page == "Route Optimization Simulator":
                         )
                         st.pydeck_chart(deck)
                     else:
-                        st.error("Route geometry not available.")
+                        st.error("Route geometry not available or invalid. Please check the OSRM response.")
                     
                     # Link sustainability metrics: fetch updated metrics and display a summary
                     updated_metrics = get_metrics_from_db()
